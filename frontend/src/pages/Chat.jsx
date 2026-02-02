@@ -37,8 +37,10 @@ function Chat() {
 
     const [contacts, setLocalContacts] = useState([]);
     const [inputText, setInputText] = useState('');
+    const [unreadCounts, setUnreadCounts] = useState({}); // { userId: count }
     const messagesEndRef = useRef(null);
     const typingTimeoutRef = useRef(null);
+    const previousSelectedUserRef = useRef(null); // Track previous selection
 
     // ─── LOAD ALL USERS ───
     useEffect(() => {
@@ -56,21 +58,60 @@ function Chat() {
         fetchUsers();
     }, [token, setContacts]);
 
-    // ─── LOAD CHAT HISTORY ───
+    // ─── LOAD CHAT HISTORY (FIXED) ───
     useEffect(() => {
         const fetchHistory = async () => {
-            if (!selectedUser) return;
+            if (!selectedUser) {
+                // If no user is selected, clear messages
+                setMessages([]);
+                return;
+            }
+
+            // Only fetch if this is a NEW selection (not the same user clicked again)
+            if (previousSelectedUserRef.current?.id === selectedUser.id) {
+                // Same user - do nothing, messages already loaded
+                return;
+            }
+
+            // New user selected - fetch their messages
             try {
                 const response = await axios.get(`${API_URL}/chat/history/${selectedUser.id}`, {
                     headers: { Authorization: `Bearer ${token}` }
                 });
                 setMessages(response.data.messages);
+
+                // Clear unread count for this user
+                setUnreadCounts(prev => ({
+                    ...prev,
+                    [selectedUser.id]: 0
+                }));
+
+                // Update the previous selection
+                previousSelectedUserRef.current = selectedUser;
             } catch (error) {
                 console.error('Failed to fetch chat history:', error);
             }
         };
+
         fetchHistory();
     }, [selectedUser, token, setMessages]);
+
+    // ─── COUNT UNREAD MESSAGES ───
+    useEffect(() => {
+        // When a new message arrives, increment unread count if it's not from the selected user
+        if (messages.length === 0) return;
+
+        const lastMessage = messages[messages.length - 1];
+        const senderId = lastMessage.sender_id || lastMessage.senderId;
+
+        // If message is from someone else and they're not currently selected
+        if (senderId !== user.id && senderId !== selectedUser?.id) {
+            setUnreadCounts(prev => ({
+                ...prev,
+                [senderId]: (prev[senderId] || 0) + 1
+            }));
+        }
+    }, [messages, user.id, selectedUser]);
 
     // ─── AUTO SCROLL ───
     useEffect(() => {
@@ -97,6 +138,19 @@ function Chat() {
 
     const handleKeyPress = (e) => {
         if (e.key === 'Enter') handleSend();
+    };
+
+    // ─── HANDLE USER SELECTION (FIXED) ───
+    const handleUserClick = (contact) => {
+        if (selectedUser?.id === contact.id) {
+            // Same user clicked - deselect them (close conversation)
+            selectUser(null);
+            setMessages([]);
+            previousSelectedUserRef.current = null;
+        } else {
+            // New user clicked - select them (will trigger history fetch)
+            selectUser(contact);
+        }
     };
 
     const chatMessages = selectedUser
@@ -198,13 +252,19 @@ function Chat() {
                                     <div
                                         key={contact.id}
                                         className={`contact-item ${selectedUser?.id === contact.id ? 'active' : ''}`}
-                                        onClick={() => selectUser(contact)}
+                                        onClick={() => handleUserClick(contact)}
                                     >
                                         <div className={`avatar ${isUserOnline(contact.id) ? 'online' : 'offline'}`}>
                                             {contact.username.charAt(0).toUpperCase()}
                                         </div>
                                         <div className="contact-info">
-                                            <span className="contact-name">{contact.username}</span>
+                                            <div className="contact-name-row">
+                                                <span className="contact-name">{contact.username}</span>
+                                                {/* UNREAD BADGE */}
+                                                {unreadCounts[contact.id] > 0 && (
+                                                    <span className="unread-badge">{unreadCounts[contact.id]}</span>
+                                                )}
+                                            </div>
                                             <span className={`contact-status ${isUserOnline(contact.id) ? 'online' : 'offline'}`}>
                                                 {isUserOnline(contact.id) ? 'Online' : 'Offline'}
                                             </span>
