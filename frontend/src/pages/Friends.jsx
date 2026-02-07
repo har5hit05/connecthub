@@ -230,6 +230,7 @@ function Friends() {
                     <Link to="/chat" className="nav-link">Chat</Link>
                     <Link to="/calls" className="nav-link">History</Link>
                     <Link to="/friends" className="nav-link active">Friends</Link>
+                    <Link to="/profile" className="nav-link">Profile</Link>
                 </div>
                 <div className="header-right">
                     <span className="header-username">

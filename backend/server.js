@@ -1,3 +1,4 @@
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -22,6 +23,7 @@ const io = socketIo(server, {
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.urlencoded({ extended: true }));
 
 const authRoutes = require('./routes/authRoutes');
@@ -33,6 +35,10 @@ app.use('/api/chat', chatRoutes);
 // Friend routes
 const friendRoutes = require('./routes/friendRoutes');
 app.use('/api/friends', friendRoutes);
+
+// Profile routes
+const profileRoutes = require('./routes/profileRoutes');
+app.use('/api/profile', profileRoutes);
 
 // Test route
 app.get('/', (req, res) => {

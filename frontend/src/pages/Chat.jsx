@@ -235,6 +235,7 @@ function Chat() {
                             <Link to="/chat" className="nav-link active">Chat</Link>
                             <Link to="/calls" className="nav-link">History</Link>
                             <Link to="/friends" className="nav-link">Friends</Link>
+                            <Link to="/profile" className="nav-link">Profile</Link>
                         </div>
                         <div className="header-right">
                             <span className="header-username">👤 {user?.username}</span>
