@@ -12,6 +12,9 @@ A full-stack real-time communication platform built with **React**, **Node.js**,
 - 👥 Online/Offline presence system
 - 📋 Call history with duration tracking
 - 📊 Dashboard with stats and quick actions
+- 🧑‍🤝‍🧑 Friend Request System
+- 👤 User Profile Management
+- 🫸 Block user to resrict any kind of communication
 
 ## Tech Stack
 
@@ -38,7 +41,7 @@ ConnectHub/
 │   ├── src/
 │   │   ├── components/  # IncomingCall, VideoCall
 │   │   ├── context/     # AuthContext, SocketContext
-│   │   ├── pages/       # Dashboard, Chat, CallHistory, Login, Register
+│   │   ├── pages/       # Dashboard, Chat, CallHistory, Login, Register, Friends
 │   │   ├── App.jsx      # Routes
 │   │   └── App.css      # All styles
 │   └── ...
