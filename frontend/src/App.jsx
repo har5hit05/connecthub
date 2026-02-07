@@ -6,6 +6,7 @@ import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
 import CallHistory from './pages/CallHistory';
+import Friends from './pages/Friends';
 import NotFound from './pages/NotFound';
 import './App.css';
 
@@ -35,6 +36,7 @@ function App() {
             <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/chat" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
             <Route path="/calls" element={<ProtectedRoute><CallHistory /></ProtectedRoute>} />
+            <Route path="/friends" element={<ProtectedRoute><Friends /></ProtectedRoute>} />
 
             {/* Auth Routes */}
             <Route path="/login" element={<AuthRoute><Login /></AuthRoute>} />

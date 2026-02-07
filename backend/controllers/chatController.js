@@ -48,8 +48,33 @@ const getAllUsers = async (req, res) => {
     try {
         const myUserId = req.user.id;
 
+        // Only return friends (users I have an accepted friendship with)
         const result = await db.query(
-            `SELECT id, username, email FROM users WHERE id != $1 ORDER BY username ASC`,
+            `SELECT 
+         CASE 
+           WHEN f.user1_id = $1 THEN f.user2_id 
+           ELSE f.user1_id 
+         END as id,
+         CASE 
+           WHEN f.user1_id = $1 THEN u2.username 
+           ELSE u1.username 
+         END as username,
+         CASE 
+           WHEN f.user1_id = $1 THEN u2.email 
+           ELSE u1.email 
+         END as email,
+         CASE 
+           WHEN f.user1_id = $1 THEN u2.avatar_url 
+           ELSE u1.avatar_url 
+         END as avatar_url,
+         CASE 
+           WHEN f.user1_id = $1 THEN u2.is_online 
+           ELSE u1.is_online 
+         END as is_online
+       FROM friendships f
+       LEFT JOIN users u1 ON u1.id = f.user1_id
+       LEFT JOIN users u2 ON u2.id = f.user2_id
+       WHERE f.user1_id = $1 OR f.user2_id = $1`,
             [myUserId]
         );
 

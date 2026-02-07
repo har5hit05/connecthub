@@ -9,7 +9,7 @@ import VideoCall from '../components/VideoCall';
 const API_URL = 'http://localhost:5000/api';
 
 function Chat() {
-    const { user, token } = useAuth();
+    const { user, token, logout } = useAuth();
     const {
         onlineUsers,
         messages,
@@ -234,9 +234,11 @@ function Chat() {
                             <Link to="/" className="nav-link">Dashboard</Link>
                             <Link to="/chat" className="nav-link active">Chat</Link>
                             <Link to="/calls" className="nav-link">History</Link>
+                            <Link to="/friends" className="nav-link">Friends</Link>
                         </div>
                         <div className="header-right">
                             <span className="header-username">👤 {user?.username}</span>
+                            <button className="logout-btn" onClick={logout}>Logout</button>
                         </div>
                     </div>
 
