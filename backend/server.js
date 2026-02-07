@@ -40,6 +40,10 @@ app.use('/api/friends', friendRoutes);
 const profileRoutes = require('./routes/profileRoutes');
 app.use('/api/profile', profileRoutes);
 
+// Block routes
+const blockRoutes = require('./routes/blockRoutes');
+app.use('/api/block', blockRoutes);
+
 // Test route
 app.get('/', (req, res) => {
     res.json({ message: 'ConnectHub API is running!' });

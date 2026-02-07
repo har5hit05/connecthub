@@ -36,6 +36,20 @@ const setupSocketHandlers = (io) => {
             try {
                 const { senderId, receiverId, message } = data;
 
+                // Check if blocked
+                const blockCheck = await db.query(
+                    `SELECT * FROM blocked_users 
+                    WHERE (blocker_id = $1 AND blocked_id = $2) 
+                    OR (blocker_id = $2 AND blocked_id = $1)`,
+                    [senderId, receiverId]
+                );
+
+                if (blockCheck.rows.length > 0) {
+                    // User is blocked, don't send message
+                    socket.emit('message_blocked', { message: 'Cannot send message to this user' });
+                    return;
+                }
+
                 // Step 1: Save message to database
                 const result = await db.query(
                     `INSERT INTO messages (sender_id, receiver_id, message)
@@ -114,6 +128,21 @@ const setupSocketHandlers = (io) => {
         // ─────────────────────────────────────
         socket.on('call_request', (data) => {
             const { callerId, receiverId, callType } = data;
+
+            // Check if blocked
+            const blockCheck = db.query(
+                `SELECT * FROM blocked_users 
+                WHERE (blocker_id = $1 AND blocked_id = $2) 
+                OR (blocker_id = $2 AND blocked_id = $1)`,
+                [callerId, receiverId]
+            );
+
+            if (blockCheck.rows.length > 0) {
+                // User is blocked, reject call
+                socket.emit('call_blocked', { message: 'Cannot call this user' });
+                return;
+            }
+
             const receiverSocketId = onlineUsers.get(receiverId);
 
             if (receiverSocketId) {

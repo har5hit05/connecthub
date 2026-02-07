@@ -278,9 +278,14 @@ function Profile() {
                                 </div>
 
                                 {isMyProfile && (
-                                    <button className="btn-primary btn-full-width" onClick={() => setEditing(true)}>
-                                        Edit Profile
-                                    </button>
+                                    <>
+                                        <button className="btn-primary btn-full-width" onClick={() => setEditing(true)}>
+                                            Edit Profile
+                                        </button>
+                                        <Link to="/blocked" className="btn-secondary btn-full-width" style={{ textAlign: 'center', display: 'block', marginTop: '12px', textDecoration: 'none' }}>
+                                            Blocked Users
+                                        </Link>
+                                    </>
                                 )}
                             </>
                         ) : (

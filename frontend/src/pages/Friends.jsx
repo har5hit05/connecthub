@@ -210,6 +210,22 @@ function Friends() {
         }
     };
 
+    const handleBlockUser = async (userId) => {
+        if (!confirm('Block this user? This will remove them from your friends and they will not be able to contact you.')) return;
+
+        try {
+            await axios.post(`${API_URL}/block/block`,
+                { blockedId: userId },
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+            alert('User blocked successfully');
+            fetchFriends(); // Refresh friends list
+        } catch (error) {
+            console.error('Block failed:', error);
+            alert(error.response?.data?.message || 'Failed to block user');
+        }
+    };
+
     if (loading) {
         return (
             <div className="friends-container">
@@ -299,6 +315,13 @@ function Friends() {
                                                 <Link to="/chat" className="btn-icon" title="Chat">
                                                     &#128172;
                                                 </Link>
+                                                <button
+                                                    className="btn-icon-warning"
+                                                    onClick={() => handleBlockUser(friend.friend_id)}
+                                                    title="Block User"
+                                                >
+                                                    &#128683;
+                                                </button>
                                                 <button
                                                     className="btn-icon-danger"
                                                     onClick={() => removeFriend(friend.friend_id)}

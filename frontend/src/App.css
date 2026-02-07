@@ -2391,3 +2391,158 @@ body {
     width: 100%;
   }
 }
+
+/* ════════════════════════════════════════ */
+/* BLOCKED USERS PAGE                       */
+/* ════════════════════════════════════════ */
+.blocked-container {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  background: #0f172a;
+  overflow: hidden;
+}
+
+.blocked-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px;
+  height: 60px;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  flex-shrink: 0;
+  gap: 16px;
+}
+
+.blocked-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 40px;
+  display: flex;
+  justify-content: center;
+}
+
+.blocked-wrapper {
+  width: 100%;
+  max-width: 700px;
+}
+
+.blocked-title-section {
+  margin-bottom: 32px;
+}
+
+.blocked-title {
+  color: #e2e8f0;
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.blocked-subtitle {
+  color: #64748b;
+  font-size: 0.95rem;
+}
+
+.blocked-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.blocked-user-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  transition: border-color 0.2s;
+}
+
+.blocked-user-card:hover {
+  border-color: #475569;
+}
+
+.blocked-user-avatar {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: #334155;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: #e2e8f0;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.blocked-user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.blocked-user-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.blocked-user-name {
+  color: #e2e8f0;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.blocked-user-username {
+  color: #94a3b8;
+  font-size: 0.82rem;
+}
+
+.blocked-date {
+  color: #64748b;
+  font-size: 0.76rem;
+}
+
+.unblock-btn {
+  padding: 8px 20px;
+  background: transparent;
+  color: #4ade80;
+  border: 1px solid #4ade80;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.unblock-btn:hover {
+  background: #4ade80;
+  color: #0f172a;
+}
+
+/* Block button icon */
+.btn-icon-warning {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid #fbbf24;
+  color: #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.9rem;
+}
+
+.btn-icon-warning:hover {
+  background: #fbbf24;
+}

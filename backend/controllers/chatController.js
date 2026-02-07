@@ -48,7 +48,7 @@ const getAllUsers = async (req, res) => {
     try {
         const myUserId = req.user.id;
 
-        // Only return friends (users I have an accepted friendship with)
+        // Get friends, excluding blocked users
         const result = await db.query(
             `SELECT 
          CASE 
@@ -74,7 +74,12 @@ const getAllUsers = async (req, res) => {
        FROM friendships f
        LEFT JOIN users u1 ON u1.id = f.user1_id
        LEFT JOIN users u2 ON u2.id = f.user2_id
-       WHERE f.user1_id = $1 OR f.user2_id = $1`,
+       WHERE (f.user1_id = $1 OR f.user2_id = $1)
+       AND NOT EXISTS (
+         SELECT 1 FROM blocked_users bu
+         WHERE (bu.blocker_id = $1 AND bu.blocked_id = CASE WHEN f.user1_id = $1 THEN f.user2_id ELSE f.user1_id END)
+         OR (bu.blocker_id = CASE WHEN f.user1_id = $1 THEN f.user2_id ELSE f.user1_id END AND bu.blocked_id = $1)
+       )`,
             [myUserId]
         );
 

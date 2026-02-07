@@ -8,6 +8,7 @@ import Chat from './pages/Chat';
 import CallHistory from './pages/CallHistory';
 import Friends from './pages/Friends';
 import Profile from './pages/Profile';
+import BlockedUsers from './pages/BlockedUsers';
 import NotFound from './pages/NotFound';
 import './App.css';
 
@@ -40,6 +41,7 @@ function App() {
             <Route path="/friends" element={<ProtectedRoute><Friends /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
             <Route path="/profile/:userId" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+            <Route path="/blocked" element={<ProtectedRoute><BlockedUsers /></ProtectedRoute>} />
 
             {/* Auth Routes */}
             <Route path="/login" element={<AuthRoute><Login /></AuthRoute>} />
