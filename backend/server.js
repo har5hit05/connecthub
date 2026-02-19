@@ -65,6 +65,37 @@ app.get('/test-db', async (req, res) => {
     }
 });
 
+// Run database migration to add file columns and relax message NOT NULL constraint
+const runMigrations = async () => {
+    try {
+        // Add file columns if they don't exist yet
+        await db.query(`
+            ALTER TABLE messages
+            ADD COLUMN IF NOT EXISTS file_url TEXT,
+            ADD COLUMN IF NOT EXISTS file_type TEXT,
+            ADD COLUMN IF NOT EXISTS file_name TEXT
+        `);
+        // Allow message to be NULL so file-only messages can be sent
+        await db.query(`
+            ALTER TABLE messages ALTER COLUMN message DROP NOT NULL
+        `);
+        // Ensure file columns are TEXT (not VARCHAR with a short limit).
+        // If the columns already existed as VARCHAR(50), this widens them to TEXT
+        // so long MIME types and filenames don't cause "value too long" errors.
+        await db.query(`
+            ALTER TABLE messages
+            ALTER COLUMN file_url  TYPE TEXT,
+            ALTER COLUMN file_type TYPE TEXT,
+            ALTER COLUMN file_name TYPE TEXT
+        `);
+        console.log('✅ Database migration complete (file columns ensured as TEXT, message nullable)');
+    } catch (err) {
+        console.log('ℹ️  Migration note:', err.message);
+    }
+};
+
+runMigrations();
+
 // Socket.io connection
 setupSocketHandlers(io);
 

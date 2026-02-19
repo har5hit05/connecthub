@@ -109,7 +109,6 @@ const updateMyProfile = async (req, res) => {
         const userId = req.user.id;
         const { displayName, bio, status } = req.body;
 
-        console.log('Update profile request:', { userId, displayName, bio, status });
 
         // Build dynamic update query
         const updates = [];
@@ -150,7 +149,6 @@ const updateMyProfile = async (req, res) => {
 
         const result = await db.query(query, values);
 
-        console.log('Profile updated:', result.rows[0]);
 
         res.status(200).json({
             message: 'Profile updated successfully',
@@ -184,10 +182,11 @@ const uploadAvatar = async (req, res) => {
 
         // Delete old avatar file if it exists
         if (oldAvatarUrl) {
-            const oldAvatarPath = path.join(__dirname, '..', oldAvatarUrl);
-            if (fs.existsSync(oldAvatarPath)) {
+            // Sanitize: only delete files that are inside the uploads/avatars directory
+            const uploadsDir = path.resolve(__dirname, '../uploads/avatars');
+            const oldAvatarPath = path.resolve(__dirname, '..', oldAvatarUrl);
+            if (oldAvatarPath.startsWith(uploadsDir) && fs.existsSync(oldAvatarPath)) {
                 fs.unlinkSync(oldAvatarPath);
-                console.log('Deleted old avatar:', oldAvatarPath);
             }
         }
 
@@ -195,14 +194,12 @@ const uploadAvatar = async (req, res) => {
         const avatarUrl = `/uploads/avatars/${req.file.filename}`;
 
         const result = await db.query(
-            `UPDATE users 
-       SET avatar_url = $1 
-       WHERE id = $2 
+            `UPDATE users
+       SET avatar_url = $1
+       WHERE id = $2
        RETURNING id, username, avatar_url`,
             [avatarUrl, userId]
         );
-
-        console.log('Avatar uploaded:', avatarUrl);
 
         res.status(200).json({
             message: 'Avatar uploaded successfully',
@@ -232,11 +229,11 @@ const deleteAvatar = async (req, res) => {
         const avatarUrl = result.rows[0]?.avatar_url;
 
         if (avatarUrl) {
-            // Delete file
-            const avatarPath = path.join(__dirname, '..', avatarUrl);
-            if (fs.existsSync(avatarPath)) {
+            // Sanitize: only delete files inside uploads/avatars directory
+            const uploadsDir = path.resolve(__dirname, '../uploads/avatars');
+            const avatarPath = path.resolve(__dirname, '..', avatarUrl);
+            if (avatarPath.startsWith(uploadsDir) && fs.existsSync(avatarPath)) {
                 fs.unlinkSync(avatarPath);
-                console.log('Deleted avatar file:', avatarPath);
             }
 
             // Remove from database

@@ -9,23 +9,18 @@ const searchUsers = async (req, res) => {
         const { query } = req.query;
         const myUserId = req.user.id;
 
-        console.log('Search request:', { query, myUserId });
-
         if (!query || query.trim().length < 2) {
             return res.status(400).json({ message: 'Search query must be at least 2 characters' });
         }
 
-        // Search for users by username (case-insensitive)
         const result = await db.query(
-            `SELECT id, username, email, avatar_url, is_online 
-       FROM users 
-       WHERE LOWER(username) LIKE LOWER($1) 
+            `SELECT id, username, email, avatar_url, is_online
+       FROM users
+       WHERE LOWER(username) LIKE LOWER($1)
        AND id != $2
        LIMIT 20`,
-            [`%${query}%`, myUserId]
+            [`%${query.trim()}%`, myUserId]
         );
-
-        console.log('Search results:', result.rows.length, 'users found');
 
         res.status(200).json({ users: result.rows });
     } catch (error) {
@@ -39,41 +34,31 @@ const searchUsers = async (req, res) => {
 // Creates a pending friend request
 // ─────────────────────────────────────────────
 const sendFriendRequest = async (req, res) => {
+    let transactionStarted = false;
     try {
         const { receiverId } = req.body;
         const senderId = req.user.id;
-
-        console.log('Send friend request:', { senderId, receiverId });
 
         if (!receiverId) {
             return res.status(400).json({ message: 'Receiver ID is required' });
         }
 
-        // Convert to integer if it's a string
         const receiverIdInt = parseInt(receiverId);
 
         if (isNaN(receiverIdInt)) {
             return res.status(400).json({ message: 'Invalid receiver ID' });
         }
 
-        console.log(typeof receiverId, typeof senderId, typeof receiverIdInt);
-
-        console.log(" 11111111111111 ");
-
         if (senderId === receiverIdInt) {
             return res.status(400).json({ message: 'Cannot send friend request to yourself' });
         }
 
-        console.log(" 2222222222222 ");
-
         // Check if they're already friends
         const friendshipCheck = await db.query(
-            `SELECT * FROM friendships 
+            `SELECT * FROM friendships
        WHERE (user1_id = LEAST($1::integer, $2::integer) AND user2_id = GREATEST($1::integer, $2::integer))`,
             [senderId, receiverIdInt]
         );
-
-        console.log(" 33333333333333 ");
 
         if (friendshipCheck.rows.length > 0) {
             return res.status(400).json({ message: 'Already friends' });
@@ -81,12 +66,10 @@ const sendFriendRequest = async (req, res) => {
 
         // Check if request already exists
         const existingRequest = await db.query(
-            `SELECT * FROM friend_requests 
+            `SELECT * FROM friend_requests
        WHERE sender_id = $1 AND receiver_id = $2`,
             [senderId, receiverIdInt]
         );
-
-        console.log(" 44444444444444 ");
 
         if (existingRequest.rows.length > 0) {
             return res.status(400).json({ message: 'Friend request already sent' });
@@ -94,32 +77,30 @@ const sendFriendRequest = async (req, res) => {
 
         // Check if receiver has sent you a request (auto-accept)
         const reverseRequest = await db.query(
-            `SELECT * FROM friend_requests 
+            `SELECT * FROM friend_requests
        WHERE sender_id = $1 AND receiver_id = $2 AND status = 'pending'`,
             [receiverIdInt, senderId]
         );
 
-        console.log(" 55555555555555 ");
-
         if (reverseRequest.rows.length > 0) {
             // Auto-accept: create friendship and delete both requests
+            transactionStarted = true;
             await db.query('BEGIN');
 
             await db.query(
-                `INSERT INTO friendships (user1_id, user2_id) 
+                `INSERT INTO friendships (user1_id, user2_id)
          VALUES (LEAST($1::integer, $2::integer), GREATEST($1::integer, $2::integer))`,
                 [senderId, receiverIdInt]
             );
 
             await db.query(
-                `DELETE FROM friend_requests 
+                `DELETE FROM friend_requests
          WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1)`,
                 [senderId, receiverIdInt]
             );
 
             await db.query('COMMIT');
-
-            console.log('Friend request auto-accepted');
+            transactionStarted = false;
 
             return res.status(200).json({
                 message: 'Friend request auto-accepted',
@@ -129,20 +110,20 @@ const sendFriendRequest = async (req, res) => {
 
         // Create new friend request
         const result = await db.query(
-            `INSERT INTO friend_requests (sender_id, receiver_id, status) 
-       VALUES ($1, $2, 'pending') 
+            `INSERT INTO friend_requests (sender_id, receiver_id, status)
+       VALUES ($1, $2, 'pending')
        RETURNING *`,
             [senderId, receiverIdInt]
         );
-
-        console.log('Friend request created:', result.rows[0]);
 
         res.status(201).json({
             message: 'Friend request sent',
             request: result.rows[0]
         });
     } catch (error) {
-        await db.query('ROLLBACK');
+        if (transactionStarted) {
+            await db.query('ROLLBACK').catch(() => {});
+        }
         console.error('Send friend request error:', error);
         res.status(500).json({ message: 'Failed to send friend request' });
     }
@@ -203,6 +184,7 @@ const getSentRequests = async (req, res) => {
 // Creates friendship and deletes the request
 // ─────────────────────────────────────────────
 const acceptFriendRequest = async (req, res) => {
+    let transactionStarted = false;
     try {
         const requestId = parseInt(req.params.requestId);
         const myUserId = req.user.id;
@@ -213,7 +195,7 @@ const acceptFriendRequest = async (req, res) => {
 
         // Get the request
         const requestResult = await db.query(
-            `SELECT * FROM friend_requests 
+            `SELECT * FROM friend_requests
        WHERE id = $1 AND receiver_id = $2 AND status = 'pending'`,
             [requestId, myUserId]
         );
@@ -225,11 +207,12 @@ const acceptFriendRequest = async (req, res) => {
         const request = requestResult.rows[0];
         const senderId = request.sender_id;
 
+        transactionStarted = true;
         await db.query('BEGIN');
 
         // Create friendship
         await db.query(
-            `INSERT INTO friendships (user1_id, user2_id) 
+            `INSERT INTO friendships (user1_id, user2_id)
        VALUES (LEAST($1::integer, $2::integer), GREATEST($1::integer, $2::integer))`,
             [myUserId, senderId]
         );
@@ -241,12 +224,13 @@ const acceptFriendRequest = async (req, res) => {
         );
 
         await db.query('COMMIT');
-
-        console.log('Friend request accepted:', { requestId, senderId, myUserId });
+        transactionStarted = false;
 
         res.status(200).json({ message: 'Friend request accepted' });
     } catch (error) {
-        await db.query('ROLLBACK');
+        if (transactionStarted) {
+            await db.query('ROLLBACK').catch(() => {});
+        }
         console.error('Accept friend request error:', error);
         res.status(500).json({ message: 'Failed to accept friend request' });
     }
@@ -266,7 +250,7 @@ const rejectFriendRequest = async (req, res) => {
         }
 
         const result = await db.query(
-            `DELETE FROM friend_requests 
+            `DELETE FROM friend_requests
        WHERE id = $1 AND receiver_id = $2 AND status = 'pending'
        RETURNING *`,
             [requestId, myUserId]
@@ -297,7 +281,7 @@ const cancelFriendRequest = async (req, res) => {
         }
 
         const result = await db.query(
-            `DELETE FROM friend_requests 
+            `DELETE FROM friend_requests
        WHERE id = $1 AND sender_id = $2 AND status = 'pending'
        RETURNING *`,
             [requestId, myUserId]
@@ -323,26 +307,26 @@ const getFriends = async (req, res) => {
         const myUserId = req.user.id;
 
         const result = await db.query(
-            `SELECT 
-         CASE 
-           WHEN f.user1_id = $1 THEN f.user2_id 
-           ELSE f.user1_id 
+            `SELECT
+         CASE
+           WHEN f.user1_id = $1 THEN f.user2_id
+           ELSE f.user1_id
          END as friend_id,
-         CASE 
-           WHEN f.user1_id = $1 THEN u2.username 
-           ELSE u1.username 
+         CASE
+           WHEN f.user1_id = $1 THEN u2.username
+           ELSE u1.username
          END as username,
-         CASE 
-           WHEN f.user1_id = $1 THEN u2.email 
-           ELSE u1.email 
+         CASE
+           WHEN f.user1_id = $1 THEN u2.email
+           ELSE u1.email
          END as email,
-         CASE 
-           WHEN f.user1_id = $1 THEN u2.avatar_url 
-           ELSE u1.avatar_url 
+         CASE
+           WHEN f.user1_id = $1 THEN u2.avatar_url
+           ELSE u1.avatar_url
          END as avatar_url,
-         CASE 
-           WHEN f.user1_id = $1 THEN u2.is_online 
-           ELSE u1.is_online 
+         CASE
+           WHEN f.user1_id = $1 THEN u2.is_online
+           ELSE u1.is_online
          END as is_online,
          f.created_at as friends_since
        FROM friendships f
@@ -374,7 +358,7 @@ const removeFriend = async (req, res) => {
         }
 
         const result = await db.query(
-            `DELETE FROM friendships 
+            `DELETE FROM friendships
        WHERE (user1_id = LEAST($1, $2) AND user2_id = GREATEST($1, $2))
        RETURNING *`,
             [myUserId, friendId]
@@ -400,18 +384,11 @@ const checkFriendshipStatus = async (req, res) => {
         const { userId } = req.params;
         const myUserId = Number(req.user.id);
 
-        console.log('Check friendship status:', { userId, myUserId, type: typeof userId });
-        console.log('My user ID ', myUserId, 'type:::: ', typeof myUserId);
-
-        // CRITICAL FIX: Convert userId to integer
         const targetUserId = parseInt(userId);
 
         if (isNaN(targetUserId)) {
-            console.log('Invalid userId - not a number:', userId);
             return res.status(400).json({ message: 'Invalid user ID' });
         }
-
-        console.log('Parsed targetUserId:', targetUserId, 'type:', typeof targetUserId);
 
         if (targetUserId === myUserId) {
             return res.status(200).json({ status: 'self' });
@@ -419,12 +396,10 @@ const checkFriendshipStatus = async (req, res) => {
 
         // Check if friends
         const friendshipResult = await db.query(
-            `SELECT * FROM friendships 
+            `SELECT * FROM friendships
        WHERE (user1_id = LEAST($1::integer, $2::integer) AND user2_id = GREATEST($1::integer, $2::integer))`,
             [myUserId, targetUserId]
         );
-
-        console.log('Friendship check:', friendshipResult.rows.length > 0 ? 'Found' : 'Not found');
 
         if (friendshipResult.rows.length > 0) {
             return res.status(200).json({ status: 'friends' });
@@ -432,12 +407,10 @@ const checkFriendshipStatus = async (req, res) => {
 
         // Check if I sent a request
         const sentRequest = await db.query(
-            `SELECT * FROM friend_requests 
+            `SELECT * FROM friend_requests
        WHERE sender_id = $1 AND receiver_id = $2 AND status = 'pending'`,
             [myUserId, targetUserId]
         );
-
-        console.log('Sent request check:', sentRequest.rows.length > 0 ? 'Found' : 'Not found');
 
         if (sentRequest.rows.length > 0) {
             return res.status(200).json({
@@ -448,12 +421,10 @@ const checkFriendshipStatus = async (req, res) => {
 
         // Check if they sent me a request
         const receivedRequest = await db.query(
-            `SELECT * FROM friend_requests 
+            `SELECT * FROM friend_requests
        WHERE sender_id = $1 AND receiver_id = $2 AND status = 'pending'`,
             [targetUserId, myUserId]
         );
-
-        console.log('Received request check:', receivedRequest.rows.length > 0 ? 'Found' : 'Not found');
 
         if (receivedRequest.rows.length > 0) {
             return res.status(200).json({
@@ -462,8 +433,6 @@ const checkFriendshipStatus = async (req, res) => {
             });
         }
 
-        // No relationship
-        console.log('No relationship found');
         res.status(200).json({ status: 'none' });
     } catch (error) {
         console.error('Check friendship status error:', error);

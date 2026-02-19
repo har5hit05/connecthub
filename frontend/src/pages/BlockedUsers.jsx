@@ -11,8 +11,9 @@ function BlockedUsers() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        if (!token) return;
         fetchBlockedUsers();
-    }, []);
+    }, [token]);
 
     const fetchBlockedUsers = async () => {
         try {

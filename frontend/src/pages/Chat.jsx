@@ -7,6 +7,7 @@ import IncomingCall from '../components/IncomingCall';
 import VideoCall from '../components/VideoCall';
 
 const API_URL = 'http://localhost:5000/api';
+const BASE_URL = 'http://localhost:5000';
 
 function Chat() {
     const { user, token, logout } = useAuth();
@@ -38,9 +39,14 @@ function Chat() {
     const [contacts, setLocalContacts] = useState([]);
     const [inputText, setInputText] = useState('');
     const [unreadCounts, setUnreadCounts] = useState({}); // { userId: count }
+    const prevMessagesLengthRef = useRef(0); // track previous message count to detect only new arrivals
+    const [selectedFile, setSelectedFile] = useState(null); // file object chosen by user
+    const [filePreview, setFilePreview] = useState(null);   // preview URL for images
+    const [isUploading, setIsUploading] = useState(false);  // upload in progress
     const messagesEndRef = useRef(null);
     const typingTimeoutRef = useRef(null);
     const previousSelectedUserRef = useRef(null); // Track previous selection
+    const fileInputRef = useRef(null);
 
     // ─── LOAD ALL USERS ───
     useEffect(() => {
@@ -78,7 +84,9 @@ function Chat() {
                 const response = await axios.get(`${API_URL}/chat/history/${selectedUser.id}`, {
                     headers: { Authorization: `Bearer ${token}` }
                 });
-                setMessages(response.data.messages);
+                const fetchedMessages = response.data.messages;
+                prevMessagesLengthRef.current = fetchedMessages.length; // mark baseline so history load doesn't trigger unread count
+                setMessages(fetchedMessages);
 
                 // Clear unread count for this user
                 setUnreadCounts(prev => ({
@@ -98,19 +106,28 @@ function Chat() {
 
     // ─── COUNT UNREAD MESSAGES ───
     useEffect(() => {
-        // When a new message arrives, increment unread count if it's not from the selected user
-        if (messages.length === 0) return;
-
-        const lastMessage = messages[messages.length - 1];
-        const senderId = lastMessage.sender_id || lastMessage.senderId;
-
-        // If message is from someone else and they're not currently selected
-        if (senderId !== user.id && senderId !== selectedUser?.id) {
-            setUnreadCounts(prev => ({
-                ...prev,
-                [senderId]: (prev[senderId] || 0) + 1
-            }));
+        // Only count messages that are genuinely new (not loaded from history)
+        if (messages.length === 0) {
+            prevMessagesLengthRef.current = 0;
+            return;
         }
+
+        // If messages grew by exactly 1 it's a real-time arrival
+        if (messages.length === prevMessagesLengthRef.current + 1) {
+            const lastMessage = messages[messages.length - 1];
+            // Support both snake_case (from DB) and camelCase (from socket)
+            const senderId = lastMessage.sender_id ?? lastMessage.senderId;
+
+            // Increment unread only if message is from someone else AND that user is not currently open
+            if (senderId !== user.id && senderId !== selectedUser?.id) {
+                setUnreadCounts(prev => ({
+                    ...prev,
+                    [senderId]: (prev[senderId] || 0) + 1
+                }));
+            }
+        }
+
+        prevMessagesLengthRef.current = messages.length;
     }, [messages, user.id, selectedUser]);
 
     // ─── AUTO SCROLL ───
@@ -129,15 +146,79 @@ function Chat() {
         }
     };
 
-    const handleSend = () => {
-        if (!inputText.trim() || !selectedUser) return;
-        sendMessage(selectedUser.id, inputText.trim());
-        setInputText('');
+    // ─── FILE SELECTION ───
+    const handleFileSelect = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setSelectedFile(file);
+
+        // Generate preview for images
+        if (file.type.startsWith('image/')) {
+            const reader = new FileReader();
+            reader.onloadend = () => setFilePreview(reader.result);
+            reader.readAsDataURL(file);
+        } else {
+            setFilePreview(null);
+        }
+
+        // Reset the input so same file can be selected again
+        e.target.value = '';
+    };
+
+    const handleRemoveFile = () => {
+        setSelectedFile(null);
+        setFilePreview(null);
+    };
+
+    // ─── SEND MESSAGE (text and/or file) ───
+    const handleSend = async () => {
+        if (!selectedUser) return;
+        if (!inputText.trim() && !selectedFile) return;
+
+        if (selectedFile) {
+            // Upload file first, then emit message with file info
+            setIsUploading(true);
+            try {
+                const formData = new FormData();
+                formData.append('file', selectedFile);
+
+                const response = await axios.post(`${API_URL}/chat/upload`, formData, {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'multipart/form-data'
+                    }
+                });
+
+                const { fileUrl, fileType, originalName } = response.data;
+
+                // Send via socket with file info (and optional caption text)
+                sendMessage(
+                    selectedUser.id,
+                    inputText.trim() || null,
+                    { fileUrl, fileType, fileName: originalName }
+                );
+
+                setSelectedFile(null);
+                setFilePreview(null);
+                setInputText('');
+            } catch (error) {
+                console.error('File upload failed:', error);
+                alert('Failed to upload file. Please try again.');
+            } finally {
+                setIsUploading(false);
+            }
+        } else {
+            // Text-only message
+            sendMessage(selectedUser.id, inputText.trim());
+            setInputText('');
+        }
+
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     };
 
     const handleKeyPress = (e) => {
-        if (e.key === 'Enter') handleSend();
+        if (e.key === 'Enter' && !e.shiftKey) handleSend();
     };
 
     // ─── HANDLE USER SELECTION (FIXED) ───
@@ -170,6 +251,60 @@ function Chat() {
         const ampm = hours >= 12 ? 'PM' : 'AM';
         hours = hours % 12 || 12;
         return `${hours}:${minutes} ${ampm}`;
+    };
+
+    // ─── RENDER FILE ATTACHMENT IN MESSAGE ───
+    const renderFileAttachment = (msg) => {
+        const fileUrl = msg.file_url || msg.fileUrl;
+        const fileType = msg.file_type || msg.fileType;
+        const fileName = msg.file_name || msg.fileName;
+
+        if (!fileUrl) return null;
+
+        const fullUrl = `${BASE_URL}${fileUrl}`;
+
+        if (fileType && fileType.startsWith('image/')) {
+            return (
+                <a href={fullUrl} target="_blank" rel="noopener noreferrer" className="file-image-link">
+                    <img
+                        src={fullUrl}
+                        alt={fileName || 'image'}
+                        className="message-image"
+                        onError={(e) => { e.target.style.display = 'none'; }}
+                    />
+                </a>
+            );
+        }
+
+        if (fileType && fileType.startsWith('video/')) {
+            return (
+                <video controls className="message-video">
+                    <source src={fullUrl} type={fileType} />
+                </video>
+            );
+        }
+
+        if (fileType && fileType.startsWith('audio/')) {
+            return (
+                <audio controls className="message-audio">
+                    <source src={fullUrl} type={fileType} />
+                </audio>
+            );
+        }
+
+        // Generic file (PDF, doc, etc.)
+        return (
+            <a
+                href={fullUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="file-attachment"
+                download={fileName}
+            >
+                <span className="file-icon">📎</span>
+                <span className="file-name">{fileName || 'Download file'}</span>
+            </a>
+        );
     };
 
     const isUserOnline = (userId) => onlineUsers.includes(userId);
@@ -323,10 +458,16 @@ function Chat() {
                                     <div className="messages-list">
                                         {chatMessages.map((msg, index) => {
                                             const isMine = (msg.sender_id === user.id) || (msg.senderId === user.id);
+                                            const fileUrl = msg.file_url || msg.fileUrl;
                                             return (
                                                 <div key={msg.id || index} className={`message ${isMine ? 'mine' : 'theirs'}`}>
-                                                    <div className="message-bubble">
-                                                        <span className="message-text">{msg.message}</span>
+                                                    <div className={`message-bubble ${fileUrl ? 'has-file' : ''}`}>
+                                                        {/* File attachment */}
+                                                        {renderFileAttachment(msg)}
+                                                        {/* Text content (caption or message) */}
+                                                        {msg.message && (
+                                                            <span className="message-text">{msg.message}</span>
+                                                        )}
                                                         <span className="message-time">{formatTime(msg.created_at || msg.createdAt)}</span>
                                                     </div>
                                                 </div>
@@ -342,16 +483,60 @@ function Chat() {
                                         <div ref={messagesEndRef} />
                                     </div>
 
+                                    {/* File preview bar (shown when a file is selected) */}
+                                    {selectedFile && (
+                                        <div className="file-preview-bar">
+                                            <div className="file-preview-content">
+                                                {filePreview ? (
+                                                    <img src={filePreview} alt="preview" className="file-preview-img" />
+                                                ) : (
+                                                    <span className="file-preview-icon">📎</span>
+                                                )}
+                                                <div className="file-preview-info">
+                                                    <span className="file-preview-name">{selectedFile.name}</span>
+                                                    <span className="file-preview-size">
+                                                        {(selectedFile.size / 1024).toFixed(1)} KB
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <button className="file-preview-remove" onClick={handleRemoveFile} title="Remove file">✕</button>
+                                        </div>
+                                    )}
+
                                     <div className="message-input-area">
+                                        {/* Hidden file input */}
+                                        <input
+                                            type="file"
+                                            ref={fileInputRef}
+                                            onChange={handleFileSelect}
+                                            style={{ display: 'none' }}
+                                            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+                                        />
+                                        {/* Attach file button */}
+                                        <button
+                                            className="attach-btn"
+                                            onClick={() => fileInputRef.current?.click()}
+                                            title="Attach file"
+                                            disabled={isUploading}
+                                        >
+                                            📎
+                                        </button>
                                         <input
                                             type="text"
                                             className="message-input"
-                                            placeholder={`Message ${selectedUser.username}...`}
+                                            placeholder={selectedFile ? 'Add a caption...' : `Message ${selectedUser.username}...`}
                                             value={inputText}
                                             onChange={handleInputChange}
                                             onKeyPress={handleKeyPress}
+                                            disabled={isUploading}
                                         />
-                                        <button className="send-btn" onClick={handleSend} disabled={!inputText.trim()}>Send</button>
+                                        <button
+                                            className="send-btn"
+                                            onClick={handleSend}
+                                            disabled={(!inputText.trim() && !selectedFile) || isUploading}
+                                        >
+                                            {isUploading ? 'Sending...' : 'Send'}
+                                        </button>
                                     </div>
                                 </>
                             )}

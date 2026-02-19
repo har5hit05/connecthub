@@ -30,59 +30,54 @@ const setupSocketHandlers = (io) => {
 
         // ─────────────────────────────────────
         // EVENT: send_message
-        // Called when a user sends a chat message
+        // Called when a user sends a chat message (text or file)
         // ─────────────────────────────────────
         socket.on('send_message', async (data) => {
             try {
-                const { senderId, receiverId, message } = data;
+                const { senderId, receiverId, message, fileUrl, fileType, fileName } = data;
 
                 // Check if blocked
                 const blockCheck = await db.query(
-                    `SELECT * FROM blocked_users 
-                    WHERE (blocker_id = $1 AND blocked_id = $2) 
+                    `SELECT * FROM blocked_users
+                    WHERE (blocker_id = $1 AND blocked_id = $2)
                     OR (blocker_id = $2 AND blocked_id = $1)`,
                     [senderId, receiverId]
                 );
 
                 if (blockCheck.rows.length > 0) {
-                    // User is blocked, don't send message
                     socket.emit('message_blocked', { message: 'Cannot send message to this user' });
                     return;
                 }
 
-                // Step 1: Save message to database
+                // Save message to database (with optional file fields)
                 const result = await db.query(
-                    `INSERT INTO messages (sender_id, receiver_id, message)
-           VALUES ($1, $2, $3)
-           RETURNING id, sender_id, receiver_id, message, created_at`,
-                    [senderId, receiverId, message]
+                    `INSERT INTO messages (sender_id, receiver_id, message, file_url, file_type, file_name)
+                     VALUES ($1, $2, $3, $4, $5, $6)
+                     RETURNING id, sender_id, receiver_id, message, file_url, file_type, file_name, created_at`,
+                    [senderId, receiverId, message || null, fileUrl || null, fileType || null, fileName || null]
                 );
 
                 const savedMessage = result.rows[0];
-
-                // Step 2: Find the receiver's socket
                 const receiverSocketId = onlineUsers.get(receiverId);
 
-                // Step 3: Send message to the receiver (if they are online)
-                if (receiverSocketId) {
-                    io.to(receiverSocketId).emit('receive_message', {
-                        id: savedMessage.id,
-                        senderId: savedMessage.sender_id,
-                        receiverId: savedMessage.receiver_id,
-                        message: savedMessage.message,
-                        createdAt: savedMessage.created_at
-                    });
-                }
-
-                // Step 4: Send confirmation back to sender
-                // (so sender also sees the message in their chat)
-                socket.emit('message_sent', {
+                const messagePayload = {
                     id: savedMessage.id,
                     senderId: savedMessage.sender_id,
                     receiverId: savedMessage.receiver_id,
                     message: savedMessage.message,
+                    fileUrl: savedMessage.file_url,
+                    fileType: savedMessage.file_type,
+                    fileName: savedMessage.file_name,
                     createdAt: savedMessage.created_at
-                });
+                };
+
+                // Send to receiver if online
+                if (receiverSocketId) {
+                    io.to(receiverSocketId).emit('receive_message', messagePayload);
+                }
+
+                // Send confirmation back to sender
+                socket.emit('message_sent', messagePayload);
 
             } catch (error) {
                 console.error('Send message error:', error);
@@ -92,33 +87,23 @@ const setupSocketHandlers = (io) => {
 
         // ─────────────────────────────────────
         // EVENT: typing_start
-        // Called when a user starts typing
         // ─────────────────────────────────────
         socket.on('typing_start', (data) => {
             const { senderId, receiverId } = data;
             const receiverSocketId = onlineUsers.get(receiverId);
-
             if (receiverSocketId) {
-                io.to(receiverSocketId).emit('user_typing', {
-                    userId: senderId,
-                    isTyping: true
-                });
+                io.to(receiverSocketId).emit('user_typing', { userId: senderId, isTyping: true });
             }
         });
 
         // ─────────────────────────────────────
         // EVENT: typing_stop
-        // Called when a user stops typing (pauses or sends)
         // ─────────────────────────────────────
         socket.on('typing_stop', (data) => {
             const { senderId, receiverId } = data;
             const receiverSocketId = onlineUsers.get(receiverId);
-
             if (receiverSocketId) {
-                io.to(receiverSocketId).emit('user_typing', {
-                    userId: senderId,
-                    isTyping: false
-                });
+                io.to(receiverSocketId).emit('user_typing', { userId: senderId, isTyping: false });
             }
         });
 
@@ -126,43 +111,47 @@ const setupSocketHandlers = (io) => {
         // EVENT: call_request
         // User A wants to call User B
         // ─────────────────────────────────────
-        socket.on('call_request', (data) => {
-            const { callerId, receiverId, callType } = data;
+        socket.on('call_request', async (data) => {
+            try {
+                const { callerId, receiverId, callType } = data;
 
-            // Check if blocked
-            const blockCheck = db.query(
-                `SELECT * FROM blocked_users 
-                WHERE (blocker_id = $1 AND blocked_id = $2) 
-                OR (blocker_id = $2 AND blocked_id = $1)`,
-                [callerId, receiverId]
-            );
+                // Check if blocked — must await the query
+                const blockCheck = await db.query(
+                    `SELECT * FROM blocked_users
+                    WHERE (blocker_id = $1 AND blocked_id = $2)
+                    OR (blocker_id = $2 AND blocked_id = $1)`,
+                    [callerId, receiverId]
+                );
 
-            if (blockCheck.rows.length > 0) {
-                // User is blocked, reject call
-                socket.emit('call_blocked', { message: 'Cannot call this user' });
-                return;
-            }
+                if (blockCheck.rows.length > 0) {
+                    socket.emit('call_blocked', { message: 'Cannot call this user' });
+                    return;
+                }
 
-            const receiverSocketId = onlineUsers.get(receiverId);
+                const receiverSocketId = onlineUsers.get(receiverId);
 
-            if (receiverSocketId) {
-                io.to(receiverSocketId).emit('incoming_call', {
-                    callerId: callerId,
-                    callType: callType
-                });
+                if (receiverSocketId) {
+                    io.to(receiverSocketId).emit('incoming_call', {
+                        callerId: callerId,
+                        callType: callType
+                    });
 
-                // Temporarily store callType so we can use it when call is accepted
-                const pendingKey = `pending-${callerId}-${receiverId}`;
-                activeCalls.set(pendingKey, { callType });
-            } else {
-                // Receiver is offline — save as a missed call
-                db.query(
-                    `INSERT INTO calls (caller_id, receiver_id, call_type, status, created_at)
-           VALUES ($1, $2, $3, 'missed', NOW())`,
-                    [callerId, receiverId, callType]
-                ).catch(err => console.error('Failed to save missed call:', err));
+                    // Store pending call so we have callType when it's accepted
+                    const pendingKey = `pending-${callerId}-${receiverId}`;
+                    activeCalls.set(pendingKey, { callType });
+                } else {
+                    // Receiver is offline — save as missed call
+                    db.query(
+                        `INSERT INTO calls (caller_id, receiver_id, call_type, status, created_at)
+                         VALUES ($1, $2, $3, 'missed', NOW())`,
+                        [callerId, receiverId, callType]
+                    ).catch(err => console.error('Failed to save missed call:', err));
 
-                socket.emit('call_failed', { message: 'User is not online' });
+                    socket.emit('call_failed', { message: 'User is not online' });
+                }
+            } catch (error) {
+                console.error('Call request error:', error);
+                socket.emit('call_failed', { message: 'Failed to initiate call' });
             }
         });
 
@@ -175,20 +164,14 @@ const setupSocketHandlers = (io) => {
             const callerSocketId = onlineUsers.get(callerId);
 
             if (callerSocketId) {
-                io.to(callerSocketId).emit('call_accepted', {
-                    receiverId: receiverId
-                });
+                io.to(callerSocketId).emit('call_accepted', { receiverId: receiverId });
             }
 
-            // Save the call start time so we can calculate duration later
-            // We store it with a key like "3-7" (callerId-receiverId)
-            // Grab the callType from the pending call we saved in call_request
             const pendingKey = `pending-${callerId}-${receiverId}`;
             const pendingCall = activeCalls.get(pendingKey);
             const callType = pendingCall ? pendingCall.callType : 'video';
-            activeCalls.delete(pendingKey); // Remove the pending entry
+            activeCalls.delete(pendingKey);
 
-            // Save the active call with start time
             const callKey = `${callerId}-${receiverId}`;
             activeCalls.set(callKey, {
                 callerId,
@@ -207,12 +190,9 @@ const setupSocketHandlers = (io) => {
             const callerSocketId = onlineUsers.get(callerId);
 
             if (callerSocketId) {
-                io.to(callerSocketId).emit('call_rejected', {
-                    receiverId: receiverId
-                });
+                io.to(callerSocketId).emit('call_rejected', { receiverId: receiverId });
             }
 
-            // Save rejected call to database
             const pendingKey = `pending-${callerId}-${receiverId}`;
             const pendingCall = activeCalls.get(pendingKey);
             const callType = pendingCall ? pendingCall.callType : 'video';
@@ -220,57 +200,41 @@ const setupSocketHandlers = (io) => {
 
             db.query(
                 `INSERT INTO calls (caller_id, receiver_id, call_type, status, created_at)
-         VALUES ($1, $2, $3, 'rejected', NOW())`,
+                 VALUES ($1, $2, $3, 'rejected', NOW())`,
                 [callerId, receiverId, callType]
             ).catch(err => console.error('Failed to save rejected call:', err));
         });
 
         // ─────────────────────────────────────
         // EVENT: webrtc_offer
-        // User A sends the WebRTC Offer (SDP) to User B
         // ─────────────────────────────────────
         socket.on('webrtc_offer', (data) => {
             const { senderId, receiverId, offer } = data;
             const receiverSocketId = onlineUsers.get(receiverId);
-
             if (receiverSocketId) {
-                io.to(receiverSocketId).emit('webrtc_offer', {
-                    senderId: senderId,
-                    offer: offer
-                });
+                io.to(receiverSocketId).emit('webrtc_offer', { senderId, offer });
             }
         });
 
         // ─────────────────────────────────────
         // EVENT: webrtc_answer
-        // User B sends the WebRTC Answer (SDP) back to User A
         // ─────────────────────────────────────
         socket.on('webrtc_answer', (data) => {
             const { senderId, receiverId, answer } = data;
             const receiverSocketId = onlineUsers.get(receiverId);
-
             if (receiverSocketId) {
-                io.to(receiverSocketId).emit('webrtc_answer', {
-                    senderId: senderId,
-                    answer: answer
-                });
+                io.to(receiverSocketId).emit('webrtc_answer', { senderId, answer });
             }
         });
 
         // ─────────────────────────────────────
         // EVENT: webrtc_ice_candidate
-        // Exchange ICE candidates between users
-        // (happens multiple times during connection setup)
         // ─────────────────────────────────────
         socket.on('webrtc_ice_candidate', (data) => {
             const { senderId, receiverId, candidate } = data;
             const receiverSocketId = onlineUsers.get(receiverId);
-
             if (receiverSocketId) {
-                io.to(receiverSocketId).emit('webrtc_ice_candidate', {
-                    senderId: senderId,
-                    candidate: candidate
-                });
+                io.to(receiverSocketId).emit('webrtc_ice_candidate', { senderId, candidate });
             }
         });
 
@@ -279,13 +243,14 @@ const setupSocketHandlers = (io) => {
         // Either user ended the call
         // ─────────────────────────────────────
         socket.on('call_ended', (data) => {
+            if (!data) return;
             const { senderId, receiverId } = data;
-            const receiverSocketId = onlineUsers.get(receiverId);
 
-            if (receiverSocketId) {
-                io.to(receiverSocketId).emit('call_ended', {
-                    senderId: senderId
-                });
+            if (receiverId) {
+                const receiverSocketId = onlineUsers.get(receiverId);
+                if (receiverSocketId) {
+                    io.to(receiverSocketId).emit('call_ended', { senderId });
+                }
             }
 
             // Find the active call (could be either direction)
@@ -293,35 +258,29 @@ const setupSocketHandlers = (io) => {
             let callData = activeCalls.get(callKey);
 
             if (!callData) {
-                // Try the other direction
                 callKey = `${receiverId}-${senderId}`;
                 callData = activeCalls.get(callKey);
             }
 
             if (callData) {
-                // Calculate duration in seconds
                 const duration = Math.round((new Date() - callData.startTime) / 1000);
 
-                // Save completed call to database
                 db.query(
                     `INSERT INTO calls (caller_id, receiver_id, call_type, status, duration, started_at, ended_at, created_at)
-           VALUES ($1, $2, $3, 'completed', $4, $5, NOW(), NOW())`,
+                     VALUES ($1, $2, $3, 'completed', $4, $5, NOW(), NOW())`,
                     [callData.callerId, callData.receiverId, callData.callType, duration, callData.startTime]
                 ).catch(err => console.error('Failed to save completed call:', err));
 
-                // Remove from active calls
                 activeCalls.delete(callKey);
             }
         });
 
         // ─────────────────────────────────────
         // EVENT: disconnect
-        // Called when a user closes the tab or loses connection
         // ─────────────────────────────────────
         socket.on('disconnect', () => {
             console.log('❌ Socket disconnected:', socket.id);
 
-            // Find which user this socket belonged to
             let disconnectedUserId = null;
             for (const [userId, socketId] of onlineUsers.entries()) {
                 if (socketId === socket.id) {
@@ -330,15 +289,13 @@ const setupSocketHandlers = (io) => {
                 }
             }
 
-            // Remove user from online list
             if (disconnectedUserId !== null) {
                 onlineUsers.delete(disconnectedUserId);
                 console.log(`🔴 User ${disconnectedUserId} went offline`);
 
-                // Tell everyone this user went offline
                 socket.broadcast.emit('user_offline', { userId: disconnectedUserId });
 
-                // If this user was in a call, end the call for the other person
+                // End any active calls for this user
                 socket.broadcast.emit('call_ended', { senderId: disconnectedUserId });
             }
         });

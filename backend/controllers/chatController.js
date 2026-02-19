@@ -1,4 +1,74 @@
 const db = require('../config/database');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Configure multer for chat file uploads
+const chatStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadDir = path.join(__dirname, '../uploads/chat');
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueName = `${req.user.id}_${Date.now()}${path.extname(file.originalname)}`;
+        cb(null, uniqueName);
+    }
+});
+
+const chatFileFilter = (req, file, cb) => {
+    // Allow images, PDFs, documents, and common file types
+    const allowedMimeTypes = [
+        'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
+        'application/pdf',
+        'text/plain',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'video/mp4', 'video/webm',
+        'audio/mpeg', 'audio/wav', 'audio/ogg'
+    ];
+
+    if (allowedMimeTypes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('File type not allowed'));
+    }
+};
+
+const chatUpload = multer({
+    storage: chatStorage,
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB limit
+    fileFilter: chatFileFilter
+});
+
+// ─────────────────────────────────────
+// UPLOAD CHAT FILE
+// Uploads a file and returns the URL
+// ─────────────────────────────────────
+const uploadChatFile = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'No file uploaded' });
+        }
+
+        const fileUrl = `/uploads/chat/${req.file.filename}`;
+        const fileType = req.file.mimetype;
+        const originalName = req.file.originalname;
+
+        res.status(200).json({
+            fileUrl,
+            fileType,
+            originalName
+        });
+    } catch (error) {
+        console.error('Upload chat file error:', error);
+        res.status(500).json({ message: 'Failed to upload file' });
+    }
+};
 
 // ─────────────────────────────────────
 // GET CHAT HISTORY
@@ -19,6 +89,9 @@ const getChatHistory = async (req, res) => {
         m.sender_id,
         m.receiver_id,
         m.message,
+        m.file_url,
+        m.file_type,
+        m.file_name,
         m.is_read,
         m.created_at,
         u.username AS sender_username
@@ -127,4 +200,4 @@ const getCallHistory = async (req, res) => {
     }
 };
 
-module.exports = { getChatHistory, getAllUsers, getCallHistory };
+module.exports = { getChatHistory, getAllUsers, getCallHistory, uploadChatFile, chatUpload };

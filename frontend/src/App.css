@@ -2546,3 +2546,179 @@ body {
 .btn-icon-warning:hover {
   background: #fbbf24;
 }
+
+/* ════════════════════════════════════════ */
+/* FILE ATTACHMENTS IN CHAT                 */
+/* ════════════════════════════════════════ */
+
+/* Attach button in message input area */
+.attach-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid #475569;
+  color: #94a3b8;
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.attach-btn:hover {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: #6366f1;
+  color: #e2e8f0;
+}
+
+.attach-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* File preview bar above the input */
+.file-preview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: #1a2744;
+  border-top: 1px solid #334155;
+  gap: 12px;
+}
+
+.file-preview-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.file-preview-img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.file-preview-icon {
+  font-size: 1.8rem;
+  flex-shrink: 0;
+}
+
+.file-preview-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.file-preview-name {
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-preview-size {
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.file-preview-remove {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.file-preview-remove:hover {
+  background: rgba(248, 113, 113, 0.2);
+  color: #f87171;
+}
+
+/* Message bubble with file content */
+.message-bubble.has-file {
+  padding: 8px 10px;
+  gap: 6px;
+}
+
+/* Image in message */
+.file-image-link {
+  display: block;
+  line-height: 0;
+}
+
+.message-image {
+  max-width: 260px;
+  max-height: 200px;
+  width: auto;
+  height: auto;
+  border-radius: 10px;
+  object-fit: cover;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  display: block;
+}
+
+.message-image:hover {
+  opacity: 0.9;
+}
+
+/* Video in message */
+.message-video {
+  max-width: 280px;
+  max-height: 200px;
+  border-radius: 10px;
+  display: block;
+}
+
+/* Audio in message */
+.message-audio {
+  max-width: 260px;
+  display: block;
+  height: 40px;
+}
+
+/* Generic file attachment link */
+.file-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+  text-decoration: none;
+  max-width: 260px;
+  transition: background 0.2s;
+}
+
+.file-attachment:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.file-icon {
+  font-size: 1.3rem;
+  flex-shrink: 0;
+}
+
+.file-name {
+  color: #e2e8f0;
+  font-size: 0.83rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -23,11 +23,12 @@ function Friends() {
 
     const [loading, setLoading] = useState(true);
 
-    // Load friends on mount
+    // Load friends when component mounts or token changes
     useEffect(() => {
+        if (!token) return;
         fetchFriends();
         fetchRequests();
-    }, []);
+    }, [token]);
 
     const fetchFriends = async () => {
         try {
