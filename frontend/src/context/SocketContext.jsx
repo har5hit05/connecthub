@@ -335,6 +335,9 @@ export const SocketProvider = ({ children }) => {
                 senderId: data.senderId,
                 receiverId: data.receiverId,
                 message: data.message,
+                fileUrl: data.fileUrl,
+                fileType: data.fileType,
+                fileName: data.fileName,
                 createdAt: data.createdAt
             }]);
         });
@@ -345,6 +348,9 @@ export const SocketProvider = ({ children }) => {
                 senderId: data.senderId,
                 receiverId: data.receiverId,
                 message: data.message,
+                fileUrl: data.fileUrl,
+                fileType: data.fileType,
+                fileName: data.fileName,
                 createdAt: data.createdAt
             }]);
         });
@@ -366,26 +372,30 @@ export const SocketProvider = ({ children }) => {
         // The person we called accepted
         socketRef.current.on('call_accepted', async (data) => {
             if (!socketRef.current) return;
+            try {
+                // Create peer connection
+                const pc = createPeerConnection(data.receiverId);
 
-            // Create peer connection
-            const pc = createPeerConnection(data.receiverId);
+                // Add our stream tracks
+                if (localStreamRef.current) {
+                    localStreamRef.current.getTracks().forEach((track) => {
+                        pc.addTrack(track, localStreamRef.current);
+                    });
+                }
 
-            // Add our stream tracks
-            if (localStreamRef.current) {
-                localStreamRef.current.getTracks().forEach((track) => {
-                    pc.addTrack(track, localStreamRef.current);
+                // Create and send the Offer (SDP)
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                socketRef.current.emit('webrtc_offer', {
+                    senderId: user.id,
+                    receiverId: data.receiverId,
+                    offer: offer
                 });
+            } catch (error) {
+                console.error('Error handling call_accepted:', error);
+                cleanupCall();
             }
-
-            // Create and send the Offer (SDP)
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-
-            socketRef.current.emit('webrtc_offer', {
-                senderId: user.id,
-                receiverId: data.receiverId,
-                offer: offer
-            });
         });
 
         // The person we called rejected
@@ -403,30 +413,38 @@ export const SocketProvider = ({ children }) => {
         // We received a WebRTC Offer (we are the receiver / User B)
         socketRef.current.on('webrtc_offer', async (data) => {
             if (!socketRef.current || !peerConnectionRef.current) return;
+            try {
+                const pc = peerConnectionRef.current;
 
-            const pc = peerConnectionRef.current;
+                // Set the remote description (the offer from User A)
+                await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
 
-            // Set the remote description (the offer from User A)
-            await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                // Create and send our Answer
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
 
-            // Create and send our Answer
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-
-            socketRef.current.emit('webrtc_answer', {
-                senderId: user.id,
-                receiverId: data.senderId,
-                answer: answer
-            });
+                socketRef.current.emit('webrtc_answer', {
+                    senderId: user.id,
+                    receiverId: data.senderId,
+                    answer: answer
+                });
+            } catch (error) {
+                console.error('Error handling webrtc_offer:', error);
+                cleanupCall();
+            }
         });
 
         // We received a WebRTC Answer (we are the caller / User A)
         socketRef.current.on('webrtc_answer', async (data) => {
             if (!peerConnectionRef.current) return;
-
-            await peerConnectionRef.current.setRemoteDescription(
-                new RTCSessionDescription(data.answer)
-            );
+            try {
+                await peerConnectionRef.current.setRemoteDescription(
+                    new RTCSessionDescription(data.answer)
+                );
+            } catch (error) {
+                console.error('Error handling webrtc_answer:', error);
+                cleanupCall();
+            }
         });
 
         // We received an ICE candidate from the other user
@@ -457,12 +475,15 @@ export const SocketProvider = ({ children }) => {
     }, [user, cleanupCall]);
 
     // ── CHAT FUNCTIONS ──
-    const sendMessage = (receiverId, message) => {
+    const sendMessage = (receiverId, message, fileData) => {
         if (socketRef.current && user) {
             socketRef.current.emit('send_message', {
                 senderId: user.id,
                 receiverId,
-                message
+                message: message || null,
+                fileUrl: fileData?.fileUrl || null,
+                fileType: fileData?.fileType || null,
+                fileName: fileData?.fileName || null
             });
             socketRef.current.emit('typing_stop', { senderId: user.id, receiverId });
         }
@@ -482,7 +503,8 @@ export const SocketProvider = ({ children }) => {
 
     const selectUser = (contactUser) => {
         setSelectedUser(contactUser);
-        setMessages([]);
+        // Don't clear messages here — Chat.jsx clears them when it fetches new history
+        // so there's no flash of empty content before the fetch completes
     };
 
     return (
