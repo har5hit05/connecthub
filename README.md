@@ -134,4 +134,4 @@ NODE_ENV=development
 9. Screen sharing works by swapping the video track using `replaceTrack()`
 
 ## License
-Built as a personal project for portfolio purposes.
+Built as a personal project (for learning) for portfolio purposes.
