@@ -6,7 +6,15 @@ const config = require('../config');
 // Using a cookie instead of a header prevents XSS from stealing the token.
 const verifyToken = (req, res, next) => {
     try {
-        const token = req.cookies.jwt;
+        // Check Authorization header first (works cross-origin when cookies are blocked)
+        let token = null;
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            token = authHeader.substring(7);
+        } else {
+            // Fall back to httpOnly cookie
+            token = req.cookies.jwt;
+        }
 
         if (!token) {
             return res.status(401).json({ message: 'No token provided' });

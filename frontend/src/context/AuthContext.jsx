@@ -7,22 +7,29 @@ const AuthContext = createContext();
 // Auth endpoints are under /auth — derived from the centralized API_URL
 const API_URL = `${BASE_API_URL}/auth`;
 
-// Send cookies with every axios request (required for httpOnly cookie auth)
+// Send cookies with every axios request (for browsers that support third-party cookies)
 axios.defaults.withCredentials = true;
 
 export const AuthProvider = ({ children }) => {
     const [user, setUser]       = useState(null);
     const [loading, setLoading] = useState(true);
 
-    // On first load, check if a valid session cookie exists
+    // On first load, restore token from localStorage (handles page refresh and incognito)
     useEffect(() => {
+        const storedToken = localStorage.getItem('token');
+        if (storedToken) {
+            axios.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
+        }
+
         axios
             .get(`${API_URL}/profile`)
             .then((response) => {
                 setUser(response.data.user);
             })
             .catch(() => {
-                // No valid cookie — user is not logged in
+                // Token invalid/expired — clear everything
+                localStorage.removeItem('token');
+                delete axios.defaults.headers.common['Authorization'];
                 setUser(null);
             })
             .finally(() => {
@@ -40,20 +47,30 @@ export const AuthProvider = ({ children }) => {
         return response.data;
     };
 
-    // LOGIN function — server sets httpOnly cookie, we just store the user object
+    // LOGIN function — server sets httpOnly cookie AND returns token in body
+    // Token is stored in localStorage as fallback for cross-origin/incognito
     const login = async (email, password) => {
         const response = await axios.post(`${API_URL}/login`, { email, password });
-        setUser(response.data.user);
+        const { user, token } = response.data;
+
+        if (token) {
+            localStorage.setItem('token', token);
+            axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        }
+
+        setUser(user);
         return response.data;
     };
 
-    // LOGOUT function — ask server to clear the cookie, then clear local state
+    // LOGOUT function — clear cookie, localStorage token, and local state
     const logout = async () => {
         try {
             await axios.post(`${API_URL}/logout`);
         } catch {
             // Clear state even if the request fails
         }
+        localStorage.removeItem('token');
+        delete axios.defaults.headers.common['Authorization'];
         setUser(null);
     };
 

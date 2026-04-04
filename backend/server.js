@@ -105,9 +105,15 @@ app.use(errorHandler);
 // Reads JWT from the httpOnly cookie sent automatically by the browser.
 // cookie-parser only parses HTTP request headers; for Socket.io we parse manually.
 io.use((socket, next) => {
-    const cookieHeader = socket.handshake.headers.cookie || '';
-    const cookies = cookie.parse(cookieHeader);
-    const token = cookies.jwt;
+    // Check handshake auth token first (cross-origin when cookies are blocked)
+    let token = socket.handshake.auth?.token || null;
+
+    if (!token) {
+        // Fall back to httpOnly cookie
+        const cookieHeader = socket.handshake.headers.cookie || '';
+        const cookies = cookie.parse(cookieHeader);
+        token = cookies.jwt;
+    }
 
     if (!token) {
         return next(new Error('Authentication required'));

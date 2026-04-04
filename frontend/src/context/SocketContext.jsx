@@ -54,8 +54,10 @@ export const SocketProvider = ({ children }) => {
     // ───────────────────────────────────────────
     const fetchIceConfig = async () => {
         try {
+            const storedToken = localStorage.getItem('token');
             const res = await fetch(`${API_URL}/webrtc/turn`, {
-                credentials: 'include' // Send JWT cookie
+                credentials: 'include',
+                headers: storedToken ? { 'Authorization': `Bearer ${storedToken}` } : {}
             });
             if (res.ok) {
                 const config = await res.json();
@@ -162,10 +164,13 @@ export const SocketProvider = ({ children }) => {
         if (!callId || !metrics || metrics.sampleCount === 0) return;
 
         try {
+            const storedToken = localStorage.getItem('token');
+            const metricsHeaders = { 'Content-Type': 'application/json' };
+            if (storedToken) metricsHeaders['Authorization'] = `Bearer ${storedToken}`;
             await fetch(`${API_URL}/calls/${callId}/metrics`, {
                 method: 'POST',
                 credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
+                headers: metricsHeaders,
                 body: JSON.stringify({
                     packetLoss: Math.round(metrics.packetLoss * 100) / 100,
                     jitter: Math.round(metrics.jitter * 100) / 100,
@@ -463,10 +468,12 @@ export const SocketProvider = ({ children }) => {
             Notification.requestPermission();
         }
 
-        // The browser sends the httpOnly JWT cookie automatically.
-        // withCredentials: true is required for cross-origin cookie sending.
+        // Pass token in handshake auth for cross-origin scenarios where cookies are blocked.
+        // withCredentials: true keeps cookie support for browsers that allow it.
+        const storedToken = localStorage.getItem('token');
         socketRef.current = io(SOCKET_URL, {
-            withCredentials: true
+            withCredentials: true,
+            auth: storedToken ? { token: storedToken } : {}
         });
 
         // Handle authentication failure on socket connection
