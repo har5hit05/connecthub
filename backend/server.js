@@ -21,6 +21,9 @@ const errorHandler = require('./middleware/errorHandler');
 const app = express();
 const server = http.createServer(app);
 
+// Trust Render/proxy X-Forwarded-For headers for accurate IP-based rate limiting
+app.set('trust proxy', 1);
+
 // Initialize Socket.io
 const io = socketIo(server, {
     cors: {
