@@ -9,12 +9,14 @@ import { useState, useEffect, useRef } from 'react';
 //   isSharing     — boolean, true if YOU are currently sharing screen
 //   onShareScreen — function to start sharing screen
 //   onStopSharing — function to stop sharing screen
-function VideoCall({ localStream, remoteStream, otherUser, callType, onEndCall, isSharing, onShareScreen, onStopSharing }) {
+//   callQuality   — { packetLoss, jitter, rtt, bitrate } or null
+function VideoCall({ localStream, remoteStream, otherUser, callType, onEndCall, isSharing, onShareScreen, onStopSharing, callQuality }) {
     const localVideoRef = useRef(null);
     const remoteVideoRef = useRef(null);
 
     const [isMuted, setIsMuted] = useState(false);
     const [isCameraOff, setIsCameraOff] = useState(false);
+    const [showStats, setShowStats] = useState(false);
 
     // Attach streams to video elements
     useEffect(() => {
@@ -50,10 +52,85 @@ function VideoCall({ localStream, remoteStream, otherUser, callType, onEndCall, 
         }
     };
 
+    // ─── QUALITY LEVEL (green/yellow/red) ───
+    const getQualityLevel = () => {
+        if (!callQuality) return 'unknown';
+        const { packetLoss, rtt } = callQuality;
+        if (packetLoss > 5 || rtt > 300) return 'poor';
+        if (packetLoss > 2 || rtt > 150) return 'fair';
+        return 'good';
+    };
+
+    const getQualityColor = () => {
+        const level = getQualityLevel();
+        switch (level) {
+            case 'good': return '#22c55e';
+            case 'fair': return '#eab308';
+            case 'poor': return '#ef4444';
+            default: return '#6b7280';
+        }
+    };
+
+    const getQualityLabel = () => {
+        const level = getQualityLevel();
+        switch (level) {
+            case 'good': return 'Good';
+            case 'fair': return 'Fair';
+            case 'poor': return 'Poor';
+            default: return '...';
+        }
+    };
+
+    // ─── QUALITY INDICATOR COMPONENT ───
+    const QualityIndicator = () => {
+        if (!callQuality) return null;
+
+        return (
+            <div
+                className="call-quality-indicator"
+                onClick={() => setShowStats(!showStats)}
+                title="Click to toggle connection stats"
+            >
+                <div className="quality-bars">
+                    <span className="quality-bar" style={{ height: '6px', backgroundColor: getQualityColor() }} />
+                    <span className="quality-bar" style={{ height: '10px', backgroundColor: getQualityLevel() !== 'poor' ? getQualityColor() : '#4b5563' }} />
+                    <span className="quality-bar" style={{ height: '14px', backgroundColor: getQualityLevel() === 'good' ? getQualityColor() : '#4b5563' }} />
+                </div>
+                <span className="quality-label" style={{ color: getQualityColor() }}>{getQualityLabel()}</span>
+
+                {showStats && (
+                    <div className="quality-stats-panel">
+                        <div className="stat-row">
+                            <span className="stat-name">Packet Loss</span>
+                            <span className="stat-value" style={{ color: callQuality.packetLoss > 5 ? '#ef4444' : '#22c55e' }}>
+                                {callQuality.packetLoss.toFixed(1)}%
+                            </span>
+                        </div>
+                        <div className="stat-row">
+                            <span className="stat-name">Jitter</span>
+                            <span className="stat-value">{callQuality.jitter.toFixed(1)} ms</span>
+                        </div>
+                        <div className="stat-row">
+                            <span className="stat-name">Latency</span>
+                            <span className="stat-value" style={{ color: callQuality.rtt > 300 ? '#ef4444' : callQuality.rtt > 150 ? '#eab308' : '#22c55e' }}>
+                                {callQuality.rtt.toFixed(0)} ms
+                            </span>
+                        </div>
+                        <div className="stat-row">
+                            <span className="stat-name">Bitrate</span>
+                            <span className="stat-value">{callQuality.bitrate.toFixed(0)} kbps</span>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     // ─── AUDIO CALL SCREEN ───
     if (callType === 'audio') {
         return (
             <div className="audio-call-screen">
+                <QualityIndicator />
                 <div className="audio-call-content">
                     <div className="audio-call-avatar">
                         {otherUser?.username?.charAt(0).toUpperCase()}
@@ -83,6 +160,8 @@ function VideoCall({ localStream, remoteStream, otherUser, callType, onEndCall, 
     // ─── VIDEO CALL SCREEN ───
     return (
         <div className="video-call-screen">
+            <QualityIndicator />
+
             {/* Remote video — full screen */}
             <div className="remote-video-container">
                 <video
@@ -93,9 +172,6 @@ function VideoCall({ localStream, remoteStream, otherUser, callType, onEndCall, 
                 />
                 <div className="remote-video-label">
                     <span>{otherUser?.username}</span>
-                    {/* If the OTHER person is sharing, we could show a label here.
-              But since we can't easily detect that from this side without
-              extra signaling, we skip it for now. */}
                 </div>
             </div>
 

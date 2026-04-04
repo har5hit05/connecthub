@@ -2,11 +2,10 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
-
-const API_URL = 'http://localhost:5000/api';
+import { API_URL } from '../config';
 
 function Dashboard() {
-    const { user, token, logout } = useAuth();
+    const { user, logout } = useAuth();
     const navigate = useNavigate();
     const [stats, setStats] = useState({
         totalCalls: 0,
@@ -18,17 +17,11 @@ function Dashboard() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        const controller = new AbortController();
         const fetchData = async () => {
             try {
-                // Fetch users count
-                const usersRes = await axios.get(`${API_URL}/chat/users`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
-
-                // Fetch call history
-                const callsRes = await axios.get(`${API_URL}/chat/calls`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
+                const usersRes = await axios.get(`${API_URL}/chat/users`, { signal: controller.signal });
+                const callsRes = await axios.get(`${API_URL}/chat/calls`, { signal: controller.signal });
 
                 const calls = callsRes.data.calls;
                 const completedCalls = calls.filter(c => c.status === 'completed');
@@ -41,17 +34,21 @@ function Dashboard() {
                     totalContacts: usersRes.data.users.length
                 });
 
-                // Get last 3 calls for recent activity
                 setRecentCalls(calls.slice(0, 3));
             } catch (error) {
-                console.error('Failed to fetch dashboard data:', error);
+                if (!controller.signal.aborted) {
+                    console.error('Failed to fetch dashboard data:', error);
+                }
             } finally {
-                setLoading(false);
+                if (!controller.signal.aborted) {
+                    setLoading(false);
+                }
             }
         };
 
         fetchData();
-    }, [token]);
+        return () => controller.abort();
+    }, [user]);
 
     // Format seconds into "Xm Ys"
     const formatDuration = (seconds) => {

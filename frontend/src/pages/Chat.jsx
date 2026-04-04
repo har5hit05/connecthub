@@ -1,16 +1,28 @@
+// Chat.jsx
+// Responsibility: thin orchestrator that:
+// - Loads contacts and chat history
+// - Manages pagination state (cursor-based)
+// - Tracks unread message counts
+// - Handles scroll-to-bottom and scroll restoration after load-more
+// - Wires together ContactList, ChatHeader, MessageList, MessageInput,
+//   IncomingCall, and VideoCall
+
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import { Link } from 'react-router-dom';
-import IncomingCall from '../components/IncomingCall';
-import VideoCall from '../components/VideoCall';
+import { API_URL } from '../config';
 
-const API_URL = 'http://localhost:5000/api';
-const BASE_URL = 'http://localhost:5000';
+import IncomingCall  from '../components/IncomingCall';
+import VideoCall     from '../components/VideoCall';
+import ContactList   from '../components/ContactList';
+import ChatHeader    from '../components/ChatHeader';
+import MessageList   from '../components/MessageList';
+import MessageInput  from '../components/MessageInput';
 
 function Chat() {
-    const { user, token, logout } = useAuth();
+    const { user, logout } = useAuth();
     const {
         onlineUsers,
         messages,
@@ -27,6 +39,7 @@ function Chat() {
         localStream,
         remoteStream,
         callStatus,
+        callQuality,
         initiateCall,
         acceptCall,
         rejectCall,
@@ -36,65 +49,69 @@ function Chat() {
         stopSharing
     } = useSocket();
 
+    // ── Contacts & unread ──
     const [contacts, setLocalContacts] = useState([]);
-    const [inputText, setInputText] = useState('');
-    const [unreadCounts, setUnreadCounts] = useState({}); // { userId: count }
-    const prevMessagesLengthRef = useRef(0); // track previous message count to detect only new arrivals
-    const [selectedFile, setSelectedFile] = useState(null); // file object chosen by user
-    const [filePreview, setFilePreview] = useState(null);   // preview URL for images
-    const [isUploading, setIsUploading] = useState(false);  // upload in progress
-    const messagesEndRef = useRef(null);
-    const typingTimeoutRef = useRef(null);
-    const previousSelectedUserRef = useRef(null); // Track previous selection
-    const fileInputRef = useRef(null);
+    const [unreadCounts, setUnreadCounts] = useState({});   // { userId: count }
 
-    // ─── LOAD ALL USERS ───
+    // ── Pagination ──
+    const [hasMoreMessages, setHasMoreMessages] = useState(false);
+    const [nextCursor, setNextCursor]           = useState(null);
+    const [isLoadingMore, setIsLoadingMore]     = useState(false);
+
+    // ── Refs ──
+    const prevMessagesLengthRef    = useRef(0);     // baseline for detecting real-time arrivals
+    const previousSelectedUserRef  = useRef(null);  // tracks last selected user to avoid re-fetching
+    const messagesEndRef           = useRef(null);  // scroll anchor at bottom of list
+    const messagesListRef          = useRef(null);  // the scrollable container
+    const scrollHeightBeforeLoadRef = useRef(0);    // saved height before prepending older messages
+    const loadingMoreRef           = useRef(false); // sync flag: suppress bottom-scroll after prepend
+
+    // ─── LOAD CONTACTS ───
     useEffect(() => {
+        const controller = new AbortController();
         const fetchUsers = async () => {
             try {
-                const response = await axios.get(`${API_URL}/chat/users`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
+                const response = await axios.get(`${API_URL}/chat/users`, { signal: controller.signal });
                 setLocalContacts(response.data.users);
                 setContacts(response.data.users);
             } catch (error) {
-                console.error('Failed to fetch users:', error);
+                if (!controller.signal.aborted) {
+                    console.error('Failed to fetch contacts:', error);
+                }
             }
         };
         fetchUsers();
-    }, [token, setContacts]);
+        return () => controller.abort();
+    }, [user, setContacts]);
 
-    // ─── LOAD CHAT HISTORY (FIXED) ───
+    // ─── LOAD CHAT HISTORY (cursor-based pagination) ───
     useEffect(() => {
         const fetchHistory = async () => {
             if (!selectedUser) {
-                // If no user is selected, clear messages
                 setMessages([]);
+                setHasMoreMessages(false);
+                setNextCursor(null);
                 return;
             }
 
-            // Only fetch if this is a NEW selection (not the same user clicked again)
-            if (previousSelectedUserRef.current?.id === selectedUser.id) {
-                // Same user - do nothing, messages already loaded
-                return;
-            }
+            // Skip re-fetch if the same user is still selected
+            if (previousSelectedUserRef.current?.id === selectedUser.id) return;
 
-            // New user selected - fetch their messages
+            // Reset pagination before fetching fresh history
+            setHasMoreMessages(false);
+            setNextCursor(null);
+
             try {
-                const response = await axios.get(`${API_URL}/chat/history/${selectedUser.id}`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
-                const fetchedMessages = response.data.messages;
-                prevMessagesLengthRef.current = fetchedMessages.length; // mark baseline so history load doesn't trigger unread count
-                setMessages(fetchedMessages);
+                const response = await axios.get(
+                    `${API_URL}/chat/history/${selectedUser.id}?limit=50`
+                );
+                const { messages: fetched, hasMore, nextCursor: cursor } = response.data;
 
-                // Clear unread count for this user
-                setUnreadCounts(prev => ({
-                    ...prev,
-                    [selectedUser.id]: 0
-                }));
-
-                // Update the previous selection
+                prevMessagesLengthRef.current = fetched.length;
+                setMessages(fetched);
+                setHasMoreMessages(hasMore);
+                setNextCursor(cursor);
+                setUnreadCounts(prev => ({ ...prev, [selectedUser.id]: 0 }));
                 previousSelectedUserRef.current = selectedUser;
             } catch (error) {
                 console.error('Failed to fetch chat history:', error);
@@ -102,23 +119,48 @@ function Chat() {
         };
 
         fetchHistory();
-    }, [selectedUser, token, setMessages]);
+    }, [selectedUser, user, setMessages]);
 
-    // ─── COUNT UNREAD MESSAGES ───
+    // ─── LOAD OLDER MESSAGES ───
+    const loadMoreMessages = async () => {
+        if (!selectedUser || !nextCursor || isLoadingMore || !hasMoreMessages) return;
+
+        setIsLoadingMore(true);
+        loadingMoreRef.current = true;
+
+        // Save scroll height BEFORE prepending — used to restore position afterwards
+        if (messagesListRef.current) {
+            scrollHeightBeforeLoadRef.current = messagesListRef.current.scrollHeight;
+        }
+
+        try {
+            const response = await axios.get(
+                `${API_URL}/chat/history/${selectedUser.id}?limit=50&before=${nextCursor}`
+            );
+            const { messages: older, hasMore, nextCursor: newCursor } = response.data;
+
+            setMessages(prev => [...older, ...prev]);
+            setHasMoreMessages(hasMore);
+            setNextCursor(newCursor);
+        } catch (error) {
+            console.error('Failed to load older messages:', error);
+            loadingMoreRef.current = false;
+            setIsLoadingMore(false);
+        }
+    };
+
+    // ─── UNREAD MESSAGE COUNTER ───
     useEffect(() => {
-        // Only count messages that are genuinely new (not loaded from history)
         if (messages.length === 0) {
             prevMessagesLengthRef.current = 0;
             return;
         }
 
-        // If messages grew by exactly 1 it's a real-time arrival
+        // Only a +1 growth means a real-time arrival (not a history load or load-more)
         if (messages.length === prevMessagesLengthRef.current + 1) {
-            const lastMessage = messages[messages.length - 1];
-            // Support both snake_case (from DB) and camelCase (from socket)
-            const senderId = lastMessage.sender_id ?? lastMessage.senderId;
+            const lastMsg  = messages[messages.length - 1];
+            const senderId = lastMsg.sender_id ?? lastMsg.senderId;
 
-            // Increment unread only if message is from someone else AND that user is not currently open
             if (senderId !== user.id && senderId !== selectedUser?.id) {
                 setUnreadCounts(prev => ({
                     ...prev,
@@ -130,110 +172,40 @@ function Chat() {
         prevMessagesLengthRef.current = messages.length;
     }, [messages, user.id, selectedUser]);
 
-    // ─── AUTO SCROLL ───
+    // ─── AUTO-SCROLL / SCROLL RESTORATION ───
     useEffect(() => {
+        if (loadingMoreRef.current && messagesListRef.current) {
+            // Restore scroll to where the user was before older messages were prepended
+            messagesListRef.current.scrollTop =
+                messagesListRef.current.scrollHeight - scrollHeightBeforeLoadRef.current;
+            loadingMoreRef.current = false;
+            setIsLoadingMore(false);
+            return;
+        }
+        // Default: scroll to the latest message
         if (messagesEndRef.current) {
             messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
     }, [messages]);
 
-    const handleInputChange = (e) => {
-        setInputText(e.target.value);
-        if (selectedUser) {
-            startTyping(selectedUser.id);
-            if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-            typingTimeoutRef.current = setTimeout(() => stopTyping(selectedUser.id), 2000);
-        }
-    };
-
-    // ─── FILE SELECTION ───
-    const handleFileSelect = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        setSelectedFile(file);
-
-        // Generate preview for images
-        if (file.type.startsWith('image/')) {
-            const reader = new FileReader();
-            reader.onloadend = () => setFilePreview(reader.result);
-            reader.readAsDataURL(file);
-        } else {
-            setFilePreview(null);
-        }
-
-        // Reset the input so same file can be selected again
-        e.target.value = '';
-    };
-
-    const handleRemoveFile = () => {
-        setSelectedFile(null);
-        setFilePreview(null);
-    };
-
-    // ─── SEND MESSAGE (text and/or file) ───
-    const handleSend = async () => {
-        if (!selectedUser) return;
-        if (!inputText.trim() && !selectedFile) return;
-
-        if (selectedFile) {
-            // Upload file first, then emit message with file info
-            setIsUploading(true);
-            try {
-                const formData = new FormData();
-                formData.append('file', selectedFile);
-
-                const response = await axios.post(`${API_URL}/chat/upload`, formData, {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        'Content-Type': 'multipart/form-data'
-                    }
-                });
-
-                const { fileUrl, fileType, originalName } = response.data;
-
-                // Send via socket with file info (and optional caption text)
-                sendMessage(
-                    selectedUser.id,
-                    inputText.trim() || null,
-                    { fileUrl, fileType, fileName: originalName }
-                );
-
-                setSelectedFile(null);
-                setFilePreview(null);
-                setInputText('');
-            } catch (error) {
-                console.error('File upload failed:', error);
-                alert('Failed to upload file. Please try again.');
-            } finally {
-                setIsUploading(false);
-            }
-        } else {
-            // Text-only message
-            sendMessage(selectedUser.id, inputText.trim());
-            setInputText('');
-        }
-
-        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    };
-
-    const handleKeyPress = (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) handleSend();
-    };
-
-    // ─── HANDLE USER SELECTION (FIXED) ───
+    // ─── CONTACT CLICK ───
     const handleUserClick = (contact) => {
         if (selectedUser?.id === contact.id) {
-            // Same user clicked - deselect them (close conversation)
+            // Same contact clicked → deselect
             selectUser(null);
             setMessages([]);
+            setHasMoreMessages(false);
+            setNextCursor(null);
             previousSelectedUserRef.current = null;
         } else {
-            // New user clicked - select them (will trigger history fetch)
             selectUser(contact);
         }
     };
 
+    // ─── DERIVED VALUES ───
+    const isUserOnline = (userId) => onlineUsers.includes(userId);
+
+    // Filter global messages to only this conversation
     const chatMessages = selectedUser
         ? messages.filter(
             (msg) =>
@@ -244,80 +216,19 @@ function Chat() {
         )
         : [];
 
-    const formatTime = (dateString) => {
-        const date = new Date(dateString);
-        let hours = date.getHours();
-        const minutes = date.getMinutes().toString().padStart(2, '0');
-        const ampm = hours >= 12 ? 'PM' : 'AM';
-        hours = hours % 12 || 12;
-        return `${hours}:${minutes} ${ampm}`;
-    };
-
-    // ─── RENDER FILE ATTACHMENT IN MESSAGE ───
-    const renderFileAttachment = (msg) => {
-        const fileUrl = msg.file_url || msg.fileUrl;
-        const fileType = msg.file_type || msg.fileType;
-        const fileName = msg.file_name || msg.fileName;
-
-        if (!fileUrl) return null;
-
-        const fullUrl = `${BASE_URL}${fileUrl}`;
-
-        if (fileType && fileType.startsWith('image/')) {
-            return (
-                <a href={fullUrl} target="_blank" rel="noopener noreferrer" className="file-image-link">
-                    <img
-                        src={fullUrl}
-                        alt={fileName || 'image'}
-                        className="message-image"
-                        onError={(e) => { e.target.style.display = 'none'; }}
-                    />
-                </a>
-            );
-        }
-
-        if (fileType && fileType.startsWith('video/')) {
-            return (
-                <video controls className="message-video">
-                    <source src={fullUrl} type={fileType} />
-                </video>
-            );
-        }
-
-        if (fileType && fileType.startsWith('audio/')) {
-            return (
-                <audio controls className="message-audio">
-                    <source src={fullUrl} type={fileType} />
-                </audio>
-            );
-        }
-
-        // Generic file (PDF, doc, etc.)
-        return (
-            <a
-                href={fullUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="file-attachment"
-                download={fileName}
-            >
-                <span className="file-icon">📎</span>
-                <span className="file-name">{fileName || 'Download file'}</span>
-            </a>
-        );
-    };
-
-    const isUserOnline = (userId) => onlineUsers.includes(userId);
     const isSelectedUserTyping = selectedUser && typingUsers[selectedUser.id];
 
     const incomingCaller = incomingCall
-        ? { id: incomingCall.callerId, username: contacts.find(c => c.id === incomingCall.callerId)?.username || 'Someone' }
+        ? {
+            id: incomingCall.callerId,
+            username: contacts.find(c => c.id === incomingCall.callerId)?.username || 'Someone'
+          }
         : null;
 
     return (
         <div className="home-container">
 
-            {/* Incoming Call Overlay */}
+            {/* ── Incoming Call Overlay ── */}
             {incomingCall && (
                 <IncomingCall
                     caller={incomingCaller}
@@ -327,8 +238,8 @@ function Chat() {
                 />
             )}
 
-            {/* Active Video/Audio Call */}
-            {activeCall && (callStatus === 'connected' || activeCall.callType) && remoteStream ? (
+            {/* ── Active Video/Audio Call ── */}
+            {activeCall && (callStatus === 'connected' || activeCall.callType) && remoteStream && (
                 <VideoCall
                     localStream={localStream}
                     remoteStream={remoteStream}
@@ -338,10 +249,11 @@ function Chat() {
                     isSharing={isSharing}
                     onShareScreen={shareScreen}
                     onStopSharing={stopSharing}
+                    callQuality={callQuality}
                 />
-            ) : null}
+            )}
 
-            {/* Calling... screen */}
+            {/* ── Calling... screen ── */}
             {activeCall && callStatus === 'calling' && (
                 <div className="calling-overlay">
                     <div className="calling-box">
@@ -357,10 +269,36 @@ function Chat() {
                 </div>
             )}
 
-            {/* Normal Chat Layout */}
+            {/* ── Call Rejected ── */}
+            {activeCall && callStatus === 'rejected' && (
+                <div className="calling-overlay">
+                    <div className="calling-box">
+                        <div className="calling-avatar" style={{ backgroundColor: '#ff4d4f' }}>
+                            ✖
+                        </div>
+                        <h2>Call Rejected</h2>
+                        <p>{activeCall?.username} declined the call.</p>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Call Failed ── */}
+            {activeCall && callStatus === 'failed' && (
+                <div className="calling-overlay">
+                    <div className="calling-box">
+                        <div className="calling-avatar" style={{ backgroundColor: '#ff4d4f' }}>
+                            !
+                        </div>
+                        <h2>Call Failed</h2>
+                        <p>{activeCall?.username} is offline or unavailable.</p>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Normal Chat Layout ── */}
             {!activeCall && (
                 <>
-                    {/* Header */}
+                    {/* Navigation header */}
                     <div className="home-header">
                         <div className="header-left">
                             <Link to="/" className="header-logo">ConnectHub</Link>
@@ -379,55 +317,18 @@ function Chat() {
                     </div>
 
                     <div className="chat-layout">
-                        {/* Sidebar */}
-                        <div className="sidebar">
-                            <div className="sidebar-header">
-                                <h3>Contacts</h3>
-                                <span className="online-count">{onlineUsers.length} online</span>
-                            </div>
-                            <div className="contact-list">
-                                {contacts.map((contact) => (
-                                    <div
-                                        key={contact.id}
-                                        className={`contact-item ${selectedUser?.id === contact.id ? 'active' : ''}`}
-                                        onClick={() => handleUserClick(contact)}
-                                    >
-                                        <div className={`avatar ${isUserOnline(contact.id) ? 'online' : 'offline'}`}>
-                                            {contact.username.charAt(0).toUpperCase()}
-                                        </div>
-                                        <div className="contact-info">
-                                            <div className="contact-name-row">
-                                                <span className="contact-name">{contact.username}</span>
-                                                {/* UNREAD BADGE */}
-                                                {unreadCounts[contact.id] > 0 && (
-                                                    <span className="unread-badge">{unreadCounts[contact.id]}</span>
-                                                )}
-                                            </div>
-                                            <span className={`contact-status ${isUserOnline(contact.id) ? 'online' : 'offline'}`}>
-                                                {isUserOnline(contact.id) ? 'Online' : 'Offline'}
-                                            </span>
-                                        </div>
-                                        {isUserOnline(contact.id) && (
-                                            <div className="contact-call-buttons">
-                                                <button
-                                                    className="call-icon-btn audio-call"
-                                                    onClick={(e) => { e.stopPropagation(); initiateCall(contact, 'audio'); }}
-                                                    title="Audio Call"
-                                                >📞</button>
-                                                <button
-                                                    className="call-icon-btn video-call"
-                                                    onClick={(e) => { e.stopPropagation(); initiateCall(contact, 'video'); }}
-                                                    title="Video Call"
-                                                >📹</button>
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                                {contacts.length === 0 && <p className="no-contacts">No other users yet.</p>}
-                            </div>
-                        </div>
 
-                        {/* Chat Area */}
+                        {/* Sidebar — contact list */}
+                        <ContactList
+                            contacts={contacts}
+                            selectedUser={selectedUser}
+                            onlineUsers={onlineUsers}
+                            unreadCounts={unreadCounts}
+                            onUserClick={handleUserClick}
+                            onInitiateCall={initiateCall}
+                        />
+
+                        {/* Main chat area */}
                         <div className="chat-area">
                             {!selectedUser ? (
                                 <div className="chat-placeholder">
@@ -437,107 +338,32 @@ function Chat() {
                                 </div>
                             ) : (
                                 <>
-                                    <div className="chat-header">
-                                        <div className={`chat-header-avatar ${isUserOnline(selectedUser.id) ? 'online' : 'offline'}`}>
-                                            {selectedUser.username.charAt(0).toUpperCase()}
-                                        </div>
-                                        <div className="chat-header-info">
-                                            <span className="chat-header-name">{selectedUser.username}</span>
-                                            <span className={`chat-header-status ${isUserOnline(selectedUser.id) ? 'online' : 'offline'}`}>
-                                                {isUserOnline(selectedUser.id) ? 'Online' : 'Offline'}
-                                            </span>
-                                        </div>
-                                        {isUserOnline(selectedUser.id) && (
-                                            <div className="chat-header-call-buttons">
-                                                <button className="call-icon-btn audio-call" onClick={() => initiateCall(selectedUser, 'audio')} title="Audio Call">📞</button>
-                                                <button className="call-icon-btn video-call" onClick={() => initiateCall(selectedUser, 'video')} title="Video Call">📹</button>
-                                            </div>
-                                        )}
-                                    </div>
+                                    {/* Top bar with username and call buttons */}
+                                    <ChatHeader
+                                        selectedUser={selectedUser}
+                                        isOnline={isUserOnline(selectedUser.id)}
+                                        onInitiateCall={initiateCall}
+                                    />
 
-                                    <div className="messages-list">
-                                        {chatMessages.map((msg, index) => {
-                                            const isMine = (msg.sender_id === user.id) || (msg.senderId === user.id);
-                                            const fileUrl = msg.file_url || msg.fileUrl;
-                                            return (
-                                                <div key={msg.id || index} className={`message ${isMine ? 'mine' : 'theirs'}`}>
-                                                    <div className={`message-bubble ${fileUrl ? 'has-file' : ''}`}>
-                                                        {/* File attachment */}
-                                                        {renderFileAttachment(msg)}
-                                                        {/* Text content (caption or message) */}
-                                                        {msg.message && (
-                                                            <span className="message-text">{msg.message}</span>
-                                                        )}
-                                                        <span className="message-time">{formatTime(msg.created_at || msg.createdAt)}</span>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                        {isSelectedUserTyping && (
-                                            <div className="message theirs">
-                                                <div className="message-bubble typing-bubble">
-                                                    <span className="typing-indicator"><span></span><span></span><span></span></span>
-                                                </div>
-                                            </div>
-                                        )}
-                                        <div ref={messagesEndRef} />
-                                    </div>
+                                    {/* Scrollable message list */}
+                                    <MessageList
+                                        messages={chatMessages}
+                                        currentUserId={user.id}
+                                        isTyping={isSelectedUserTyping}
+                                        hasMoreMessages={hasMoreMessages}
+                                        isLoadingMore={isLoadingMore}
+                                        onLoadMore={loadMoreMessages}
+                                        messagesEndRef={messagesEndRef}
+                                        messagesListRef={messagesListRef}
+                                    />
 
-                                    {/* File preview bar (shown when a file is selected) */}
-                                    {selectedFile && (
-                                        <div className="file-preview-bar">
-                                            <div className="file-preview-content">
-                                                {filePreview ? (
-                                                    <img src={filePreview} alt="preview" className="file-preview-img" />
-                                                ) : (
-                                                    <span className="file-preview-icon">📎</span>
-                                                )}
-                                                <div className="file-preview-info">
-                                                    <span className="file-preview-name">{selectedFile.name}</span>
-                                                    <span className="file-preview-size">
-                                                        {(selectedFile.size / 1024).toFixed(1)} KB
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <button className="file-preview-remove" onClick={handleRemoveFile} title="Remove file">✕</button>
-                                        </div>
-                                    )}
-
-                                    <div className="message-input-area">
-                                        {/* Hidden file input */}
-                                        <input
-                                            type="file"
-                                            ref={fileInputRef}
-                                            onChange={handleFileSelect}
-                                            style={{ display: 'none' }}
-                                            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
-                                        />
-                                        {/* Attach file button */}
-                                        <button
-                                            className="attach-btn"
-                                            onClick={() => fileInputRef.current?.click()}
-                                            title="Attach file"
-                                            disabled={isUploading}
-                                        >
-                                            📎
-                                        </button>
-                                        <input
-                                            type="text"
-                                            className="message-input"
-                                            placeholder={selectedFile ? 'Add a caption...' : `Message ${selectedUser.username}...`}
-                                            value={inputText}
-                                            onChange={handleInputChange}
-                                            onKeyPress={handleKeyPress}
-                                            disabled={isUploading}
-                                        />
-                                        <button
-                                            className="send-btn"
-                                            onClick={handleSend}
-                                            disabled={(!inputText.trim() && !selectedFile) || isUploading}
-                                        >
-                                            {isUploading ? 'Sending...' : 'Send'}
-                                        </button>
-                                    </div>
+                                    {/* Text input + file attach + send */}
+                                    <MessageInput
+                                        selectedUser={selectedUser}
+                                        sendMessage={sendMessage}
+                                        startTyping={startTyping}
+                                        stopTyping={stopTyping}
+                                    />
                                 </>
                             )}
                         </div>

@@ -2,24 +2,21 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
-
-const API_URL = 'http://localhost:5000/api';
+import { API_URL, BASE_URL } from '../config';
 
 function BlockedUsers() {
-    const { user, token } = useAuth();
+    const { user } = useAuth();
     const [blockedUsers, setBlockedUsers] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!token) return;
+        if (!user) return;
         fetchBlockedUsers();
-    }, [token]);
+    }, [user]);
 
     const fetchBlockedUsers = async () => {
         try {
-            const response = await axios.get(`${API_URL}/block/list`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            const response = await axios.get(`${API_URL}/block/list`);
             setBlockedUsers(response.data.blockedUsers);
         } catch (error) {
             console.error('Failed to fetch blocked users:', error);
@@ -32,9 +29,7 @@ function BlockedUsers() {
         if (!confirm('Unblock this user?')) return;
 
         try {
-            await axios.delete(`${API_URL}/block/unblock/${blockedId}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            await axios.delete(`${API_URL}/block/unblock/${blockedId}`);
             alert('User unblocked successfully');
             fetchBlockedUsers(); // Refresh list
         } catch (error) {
@@ -95,7 +90,7 @@ function BlockedUsers() {
                                     <div className="blocked-user-avatar">
                                         {blockedUser.avatar_url ? (
                                             <img
-                                                src={`http://localhost:5000${blockedUser.avatar_url}`}
+                                                src={`${BASE_URL}${blockedUser.avatar_url}`}
                                                 alt={blockedUser.username}
                                             />
                                         ) : (

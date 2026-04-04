@@ -2,11 +2,10 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
-
-const API_URL = 'http://localhost:5000/api';
+import { API_URL } from '../config';
 
 function Friends() {
-    const { user, token, logout } = useAuth();
+    const { user, logout } = useAuth();
     const [activeTab, setActiveTab] = useState('friends'); // 'friends', 'search', 'requests'
 
     // Friends list
@@ -23,40 +22,36 @@ function Friends() {
 
     const [loading, setLoading] = useState(true);
 
-    // Load friends when component mounts or token changes
+    // Load friends when component mounts or user changes
     useEffect(() => {
-        if (!token) return;
-        fetchFriends();
-        fetchRequests();
-    }, [token]);
+        if (!user) return;
+        const controller = new AbortController();
+        fetchFriends(controller.signal);
+        fetchRequests(controller.signal);
+        return () => controller.abort();
+    }, [user]);
 
-    const fetchFriends = async () => {
+    const fetchFriends = async (signal) => {
         try {
-            const response = await axios.get(`${API_URL}/friends/list`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            const response = await axios.get(`${API_URL}/friends/list`, { signal });
             setFriends(response.data.friends);
         } catch (error) {
-            console.error('Failed to fetch friends:', error);
+            if (!axios.isCancel(error)) console.error('Failed to fetch friends:', error);
         } finally {
             setLoading(false);
         }
     };
 
-    const fetchRequests = async () => {
+    const fetchRequests = async (signal) => {
         try {
             const [received, sent] = await Promise.all([
-                axios.get(`${API_URL}/friends/requests/received`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                }),
-                axios.get(`${API_URL}/friends/requests/sent`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                })
+                axios.get(`${API_URL}/friends/requests/received`, { signal }),
+                axios.get(`${API_URL}/friends/requests/sent`, { signal })
             ]);
             setReceivedRequests(received.data.requests);
             setSentRequests(sent.data.requests);
         } catch (error) {
-            console.error('Failed to fetch requests:', error);
+            if (!axios.isCancel(error)) console.error('Failed to fetch requests:', error);
         }
     };
 
@@ -68,30 +63,19 @@ function Friends() {
 
         setSearchLoading(true);
         try {
-            const response = await axios.get(`${API_URL}/friends/search?query=${encodeURIComponent(searchQuery)}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-
-            console.log('Search results:', response.data.users);
+            const response = await axios.get(`${API_URL}/friends/search?query=${encodeURIComponent(searchQuery)}`);
 
             // Get friendship status for each user
             const usersWithStatus = await Promise.all(
                 response.data.users.map(async (searchUser) => {
                     try {
-                        const statusRes = await axios.get(`${API_URL}/friends/status/${searchUser.id}`, {
-                            headers: { Authorization: `Bearer ${token}` }
-                        });
-                        console.log(`Status for ${searchUser.username}:`, statusRes.data);
+                        const statusRes = await axios.get(`${API_URL}/friends/status/${searchUser.id}`);
                         return { ...searchUser, friendshipStatus: statusRes.data };
-                    } catch (error) {
-                        console.error(`Failed to get status for user ${searchUser.id}:`, error);
-                        // Return user with default 'none' status if status check fails
+                    } catch {
                         return { ...searchUser, friendshipStatus: { status: 'none' } };
                     }
                 })
             );
-
-            console.log('Users with status:', usersWithStatus);
             setSearchResults(usersWithStatus);
         } catch (error) {
             console.error('Search failed:', error);
@@ -103,10 +87,7 @@ function Friends() {
 
     const sendFriendRequest = async (receiverId) => {
         try {
-            const response = await axios.post(`${API_URL}/friends/request`,
-                { receiverId },
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
+            const response = await axios.post(`${API_URL}/friends/request`, { receiverId });
             alert(response.data.message || 'Friend request sent!');
             handleSearch(); // Refresh search results
             fetchRequests(); // Refresh requests
@@ -118,9 +99,7 @@ function Friends() {
 
     const acceptRequest = async (requestId) => {
         try {
-            await axios.post(`${API_URL}/friends/requests/${requestId}/accept`, {}, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            await axios.post(`${API_URL}/friends/requests/${requestId}/accept`);
             alert('Friend request accepted!');
             fetchFriends();
             fetchRequests();
@@ -132,9 +111,7 @@ function Friends() {
 
     const rejectRequest = async (requestId) => {
         try {
-            await axios.delete(`${API_URL}/friends/requests/${requestId}/reject`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            await axios.delete(`${API_URL}/friends/requests/${requestId}/reject`);
             alert('Friend request rejected');
             fetchRequests();
         } catch (error) {
@@ -145,9 +122,7 @@ function Friends() {
 
     const cancelRequest = async (requestId) => {
         try {
-            await axios.delete(`${API_URL}/friends/requests/${requestId}/cancel`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            await axios.delete(`${API_URL}/friends/requests/${requestId}/cancel`);
             alert('Friend request cancelled');
             fetchRequests();
             handleSearch(); // Refresh search if active
@@ -161,9 +136,7 @@ function Friends() {
         if (!confirm('Remove this friend?')) return;
 
         try {
-            await axios.delete(`${API_URL}/friends/${friendId}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            await axios.delete(`${API_URL}/friends/${friendId}`);
             alert('Friend removed');
             fetchFriends();
         } catch (error) {
@@ -215,10 +188,7 @@ function Friends() {
         if (!confirm('Block this user? This will remove them from your friends and they will not be able to contact you.')) return;
 
         try {
-            await axios.post(`${API_URL}/block/block`,
-                { blockedId: userId },
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
+            await axios.post(`${API_URL}/block/block`, { blockedId: userId });
             alert('User blocked successfully');
             fetchFriends(); // Refresh friends list
         } catch (error) {
@@ -346,7 +316,7 @@ function Friends() {
                                         placeholder="Search by username..."
                                         value={searchQuery}
                                         onChange={(e) => setSearchQuery(e.target.value)}
-                                        onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                                         className="search-input"
                                     />
                                     <button

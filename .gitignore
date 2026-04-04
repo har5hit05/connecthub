@@ -3,6 +3,8 @@ node_modules/
 
 # Environment variables (contains passwords and secrets!)
 .env
+.env.local
+.env.production
 
 # Build outputs
 dist/
@@ -15,3 +17,15 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Uploaded files (user-generated content)
+backend/uploads/avatars/*
+backend/uploads/chat/*
+!backend/uploads/avatars/.gitkeep
+!backend/uploads/chat/.gitkeep
+
+# Test output
+backend/test_output.txt
+
+# Claude Code config
+.claude/

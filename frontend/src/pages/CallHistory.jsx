@@ -2,30 +2,47 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
-
-const API_URL = 'http://localhost:5000/api';
+import { API_URL } from '../config';
+const LIMIT = 20;
 
 function CallHistory() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const [calls, setCalls] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+
+  // Fetch a specific page of calls
+  const fetchCalls = async (pageNum, append = false) => {
+    try {
+      const response = await axios.get(
+        `${API_URL}/chat/calls?page=${pageNum}&limit=${LIMIT}`
+      );
+      const { calls: newCalls, pagination } = response.data;
+
+      setCalls(prev => append ? [...prev, ...newCalls] : newCalls);
+      setHasMore(pagination.hasMore);
+      setTotal(pagination.total);
+    } catch (error) {
+      console.error('Failed to fetch call history:', error);
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchCalls = async () => {
-      try {
-        const response = await axios.get(`${API_URL}/chat/calls`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        setCalls(response.data.calls);
-      } catch (error) {
-        console.error('Failed to fetch call history:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+    fetchCalls(1);
+  }, [user]);
 
-    fetchCalls();
-  }, [token]);
+  const handleLoadMore = async () => {
+    const nextPage = page + 1;
+    setLoadingMore(true);
+    setPage(nextPage);
+    await fetchCalls(nextPage, true); // append = true
+  };
 
   // Format seconds into "Xm Ys"
   const formatDuration = (seconds) => {
@@ -92,10 +109,10 @@ function CallHistory() {
         <h2>Call History</h2>
       </div>
 
-      {/* Stats Summary */}
+      {/* Stats Summary — uses total from server for accuracy */}
       <div className="callhistory-stats">
         <div className="stat-card">
-          <span className="stat-number">{calls.length}</span>
+          <span className="stat-number">{total}</span>
           <span className="stat-label">Total Calls</span>
         </div>
         <div className="stat-card">
@@ -106,7 +123,7 @@ function CallHistory() {
           <span className="stat-number">
             {formatDuration(calls.reduce((sum, c) => sum + (c.duration || 0), 0))}
           </span>
-          <span className="stat-label">Total Time</span>
+          <span className="stat-label">Time (loaded)</span>
         </div>
       </div>
 
@@ -119,41 +136,56 @@ function CallHistory() {
             <p>Your call history will appear here after you make or receive calls.</p>
           </div>
         ) : (
-          calls.map((call) => {
-            const otherUser = getOtherUser(call);
-            const statusStyle = getStatusStyle(call.status, otherUser.isCaller);
+          <>
+            {calls.map((call) => {
+              const otherUser = getOtherUser(call);
+              const statusStyle = getStatusStyle(call.status, otherUser.isCaller);
 
-            return (
-              <div key={call.id} className="call-item">
-                {/* Direction + Status icon */}
-                <div className="call-icon-wrap" style={{ color: statusStyle.color }}>
-                  <span className="call-direction-icon">{statusStyle.icon}</span>
-                  <span className="call-type-icon">
-                    {call.call_type === 'video' ? '📹' : '📞'}
-                  </span>
+              return (
+                <div key={call.id} className="call-item">
+                  {/* Direction + Status icon */}
+                  <div className="call-icon-wrap" style={{ color: statusStyle.color }}>
+                    <span className="call-direction-icon">{statusStyle.icon}</span>
+                    <span className="call-type-icon">
+                      {call.call_type === 'video' ? '📹' : '📞'}
+                    </span>
+                  </div>
+
+                  {/* Info */}
+                  <div className="call-info">
+                    <span className="call-other-name">{otherUser.name}</span>
+                    <span className="call-meta">
+                      <span style={{ color: statusStyle.color }}>{statusStyle.label}</span>
+                      <span className="call-meta-sep">·</span>
+                      <span>{call.call_type === 'video' ? 'Video' : 'Audio'}</span>
+                      {call.status === 'completed' && (
+                        <>
+                          <span className="call-meta-sep">·</span>
+                          <span>{formatDuration(call.duration)}</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+
+                  {/* Date */}
+                  <div className="call-date">{formatDate(call.created_at)}</div>
                 </div>
+              );
+            })}
 
-                {/* Info */}
-                <div className="call-info">
-                  <span className="call-other-name">{otherUser.name}</span>
-                  <span className="call-meta">
-                    <span style={{ color: statusStyle.color }}>{statusStyle.label}</span>
-                    <span className="call-meta-sep">·</span>
-                    <span>{call.call_type === 'video' ? 'Video' : 'Audio'}</span>
-                    {call.status === 'completed' && (
-                      <>
-                        <span className="call-meta-sep">·</span>
-                        <span>{formatDuration(call.duration)}</span>
-                      </>
-                    )}
-                  </span>
-                </div>
-
-                {/* Date */}
-                <div className="call-date">{formatDate(call.created_at)}</div>
+            {/* Load More button */}
+            {hasMore && (
+              <div className="callhistory-load-more">
+                <button
+                  className="load-more-btn"
+                  onClick={handleLoadMore}
+                  disabled={loadingMore}
+                >
+                  {loadingMore ? 'Loading...' : `Load more (${total - calls.length} remaining)`}
+                </button>
               </div>
-            );
-          })
+            )}
+          </>
         )}
       </div>
     </div>

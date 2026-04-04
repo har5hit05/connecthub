@@ -265,7 +265,7 @@ body {
   display: flex;
   flex: 1;
   overflow: hidden;
-  height: calc(100vh - 60px);
+  height: 100%;
 }
 
 /* Sidebar */
@@ -560,6 +560,35 @@ body {
   display: flex;
   gap: 8px;
   margin-left: auto;
+}
+
+/* Load older messages */
+.load-more-container {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 16px;
+}
+
+.load-more-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.6);
+  padding: 6px 16px;
+  border-radius: 16px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.load-more-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.load-more-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Messages */
@@ -1143,6 +1172,100 @@ body {
 }
 
 /* ════════════════════════════════════════ */
+/* CALL QUALITY INDICATOR                   */
+/* ════════════════════════════════════════ */
+.call-quality-indicator {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 2100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid #334155;
+  border-radius: 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s;
+}
+
+.call-quality-indicator:hover {
+  background: rgba(15, 23, 42, 0.95);
+  border-color: #475569;
+}
+
+.quality-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 16px;
+}
+
+.quality-bar {
+  width: 4px;
+  border-radius: 2px;
+  transition: background-color 0.5s ease;
+}
+
+.quality-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  transition: color 0.5s ease;
+}
+
+.quality-stats-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(16px);
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 14px 18px;
+  min-width: 200px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: stats-slide-in 0.2s ease-out;
+}
+
+@keyframes stats-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+}
+
+.stat-row + .stat-row {
+  border-top: 1px solid rgba(51, 65, 85, 0.5);
+}
+
+.stat-name {
+  color: #94a3b8;
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.stat-value {
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ════════════════════════════════════════ */
 /* DASHBOARD                                */
 /* ════════════════════════════════════════ */
 .dashboard-container {
@@ -1556,6 +1679,12 @@ body {
 .callhistory-empty p {
   color: #475569;
   font-size: 0.88rem;
+}
+
+.callhistory-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0 8px;
 }
 
 /* ════════════════════════════════════════ */
@@ -2721,4 +2850,77 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ════════════════════════════════════════ */
+/* RESPONSIVE DESIGN (MOBILE & TABLET)      */
+/* ════════════════════════════════════════ */
+@media screen and (max-width: 900px) {
+  .home-header {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 12px;
+    justify-content: center;
+  }
+  .header-nav {
+    margin-left: 0;
+    width: 100%;
+    justify-content: space-between;
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .chat-layout {
+    flex-direction: column;
+  }
+  
+  .sidebar {
+    width: 100%;
+    height: 40%;
+    min-height: 250px;
+    border-right: none;
+    border-bottom: 1px solid #334155;
+  }
+  
+  .chat-area {
+    height: 60%;
+  }
+
+  .nav-link {
+    padding: 6px 10px;
+    font-size: 0.8rem;
+  }
+
+  .auth-box {
+    padding: 24px;
+    margin: 16px;
+  }
+  
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .call-container {
+    flex-direction: column;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .sidebar {
+    height: 50%;
+  }
+  
+  .chat-area {
+    height: 50%;
+  }
+  
+  .message-bubble {
+    max-width: 85%;
+  }
+  
+  .header-username {
+    display: none;
+  }
 }

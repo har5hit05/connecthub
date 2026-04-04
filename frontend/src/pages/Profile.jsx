@@ -2,11 +2,10 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-
-const API_URL = 'http://localhost:5000/api';
+import { API_URL, BASE_URL } from '../config';
 
 function Profile() {
-    const { user: currentUser, token, logout } = useAuth();
+    const { user: currentUser, logout } = useAuth();
     const { userId } = useParams(); // If viewing another user's profile
     const navigate = useNavigate();
 
@@ -33,9 +32,7 @@ function Profile() {
                 ? `${API_URL}/profile/me`
                 : `${API_URL}/profile/${userId}`;
 
-            const response = await axios.get(endpoint, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            const response = await axios.get(endpoint);
 
             setProfile(response.data.user);
 
@@ -86,12 +83,7 @@ function Profile() {
         formData.append('avatar', avatarFile);
 
         try {
-            const response = await axios.post(`${API_URL}/profile/avatar`, formData, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'multipart/form-data'
-                }
-            });
+            const response = await axios.post(`${API_URL}/profile/avatar`, formData);
 
             alert('Avatar updated successfully!');
             setAvatarFile(null);
@@ -107,9 +99,7 @@ function Profile() {
         if (!confirm('Delete your profile picture?')) return;
 
         try {
-            await axios.delete(`${API_URL}/profile/avatar`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            await axios.delete(`${API_URL}/profile/avatar`);
 
             alert('Avatar deleted');
             fetchProfile();
@@ -121,13 +111,7 @@ function Profile() {
 
     const handleSaveProfile = async () => {
         try {
-            await axios.put(`${API_URL}/profile/me`, {
-                displayName,
-                bio,
-                status
-            }, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            await axios.put(`${API_URL}/profile/me`, { displayName, bio, status });
 
             alert('Profile updated successfully!');
             setEditing(false);
@@ -186,7 +170,7 @@ function Profile() {
                             {avatarPreview ? (
                                 <img src={avatarPreview} alt="Preview" />
                             ) : profile.avatar_url ? (
-                                <img src={`http://localhost:5000${profile.avatar_url}`} alt="Avatar" />
+                                <img src={`${BASE_URL}${profile.avatar_url}`} alt="Avatar" />
                             ) : (
                                 <span>{(profile.display_name || profile.username).charAt(0).toUpperCase()}</span>
                             )}

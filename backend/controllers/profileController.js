@@ -41,30 +41,18 @@ const upload = multer({
     fileFilter: fileFilter
 });
 
+const profileService = require('../services/profileService');
+
 // ─────────────────────────────────────────────
 // GET MY PROFILE
 // Returns current user's full profile
 // ─────────────────────────────────────────────
-const getMyProfile = async (req, res) => {
+const getMyProfile = async (req, res, next) => {
     try {
-        const userId = req.user.id;
-
-        const result = await db.query(
-            `SELECT id, username, email, display_name, bio, status, avatar_url, 
-              is_online, last_seen, created_at
-       FROM users 
-       WHERE id = $1`,
-            [userId]
-        );
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-
-        res.status(200).json({ user: result.rows[0] });
+        const user = await profileService.getProfile(req.user.id);
+        res.status(200).json({ user });
     } catch (error) {
-        console.error('Get my profile error:', error);
-        res.status(500).json({ message: 'Failed to get profile' });
+        next(error);
     }
 };
 
@@ -72,31 +60,12 @@ const getMyProfile = async (req, res) => {
 // GET USER PROFILE BY ID
 // Returns another user's public profile
 // ─────────────────────────────────────────────
-const getUserProfile = async (req, res) => {
+const getUserProfile = async (req, res, next) => {
     try {
-        const { userId } = req.params;
-        const targetUserId = parseInt(userId);
-
-        if (isNaN(targetUserId)) {
-            return res.status(400).json({ message: 'Invalid user ID' });
-        }
-
-        const result = await db.query(
-            `SELECT id, username, display_name, bio, status, avatar_url, 
-              is_online, last_seen, created_at
-       FROM users 
-       WHERE id = $1`,
-            [targetUserId]
-        );
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-
-        res.status(200).json({ user: result.rows[0] });
+        const user = await profileService.getProfile(req.params.userId);
+        res.status(200).json({ user });
     } catch (error) {
-        console.error('Get user profile error:', error);
-        res.status(500).json({ message: 'Failed to get user profile' });
+        next(error);
     }
 };
 
@@ -104,59 +73,17 @@ const getUserProfile = async (req, res) => {
 // UPDATE MY PROFILE
 // Updates display name, bio, and status
 // ─────────────────────────────────────────────
-const updateMyProfile = async (req, res) => {
+const updateMyProfile = async (req, res, next) => {
     try {
-        const userId = req.user.id;
         const { displayName, bio, status } = req.body;
-
-
-        // Build dynamic update query
-        const updates = [];
-        const values = [];
-        let paramCount = 1;
-
-        if (displayName !== undefined) {
-            updates.push(`display_name = $${paramCount}`);
-            values.push(displayName);
-            paramCount++;
-        }
-
-        if (bio !== undefined) {
-            updates.push(`bio = $${paramCount}`);
-            values.push(bio);
-            paramCount++;
-        }
-
-        if (status !== undefined) {
-            updates.push(`status = $${paramCount}`);
-            values.push(status);
-            paramCount++;
-        }
-
-        if (updates.length === 0) {
-            return res.status(400).json({ message: 'No fields to update' });
-        }
-
-        // Add userId as the last parameter
-        values.push(userId);
-
-        const query = `
-      UPDATE users 
-      SET ${updates.join(', ')}
-      WHERE id = $${paramCount}
-      RETURNING id, username, email, display_name, bio, status, avatar_url, is_online
-    `;
-
-        const result = await db.query(query, values);
-
-
+        const user = await profileService.updateProfile(req.user.id, displayName, bio, status);
+        
         res.status(200).json({
             message: 'Profile updated successfully',
-            user: result.rows[0]
+            user
         });
     } catch (error) {
-        console.error('Update profile error:', error);
-        res.status(500).json({ message: 'Failed to update profile' });
+        next(error);
     }
 };
 
@@ -164,51 +91,17 @@ const updateMyProfile = async (req, res) => {
 // UPLOAD AVATAR
 // Handles avatar image upload
 // ─────────────────────────────────────────────
-const uploadAvatar = async (req, res) => {
+const uploadAvatar = async (req, res, next) => {
     try {
-        const userId = req.user.id;
-
-        if (!req.file) {
-            return res.status(400).json({ message: 'No file uploaded' });
-        }
-
-        // Get old avatar to delete it
-        const oldAvatarResult = await db.query(
-            'SELECT avatar_url FROM users WHERE id = $1',
-            [userId]
-        );
-
-        const oldAvatarUrl = oldAvatarResult.rows[0]?.avatar_url;
-
-        // Delete old avatar file if it exists
-        if (oldAvatarUrl) {
-            // Sanitize: only delete files that are inside the uploads/avatars directory
-            const uploadsDir = path.resolve(__dirname, '../uploads/avatars');
-            const oldAvatarPath = path.resolve(__dirname, '..', oldAvatarUrl);
-            if (oldAvatarPath.startsWith(uploadsDir) && fs.existsSync(oldAvatarPath)) {
-                fs.unlinkSync(oldAvatarPath);
-            }
-        }
-
-        // Save new avatar URL to database
-        const avatarUrl = `/uploads/avatars/${req.file.filename}`;
-
-        const result = await db.query(
-            `UPDATE users
-       SET avatar_url = $1
-       WHERE id = $2
-       RETURNING id, username, avatar_url`,
-            [avatarUrl, userId]
-        );
-
+        const { avatarUrl, user } = await profileService.uploadAvatar(req.user.id, req.file);
+        
         res.status(200).json({
             message: 'Avatar uploaded successfully',
-            avatarUrl: avatarUrl,
-            user: result.rows[0]
+            avatarUrl,
+            user
         });
     } catch (error) {
-        console.error('Upload avatar error:', error);
-        res.status(500).json({ message: 'Failed to upload avatar' });
+        next(error);
     }
 };
 
@@ -216,37 +109,12 @@ const uploadAvatar = async (req, res) => {
 // DELETE AVATAR
 // Removes user's avatar
 // ─────────────────────────────────────────────
-const deleteAvatar = async (req, res) => {
+const deleteAvatar = async (req, res, next) => {
     try {
-        const userId = req.user.id;
-
-        // Get current avatar
-        const result = await db.query(
-            'SELECT avatar_url FROM users WHERE id = $1',
-            [userId]
-        );
-
-        const avatarUrl = result.rows[0]?.avatar_url;
-
-        if (avatarUrl) {
-            // Sanitize: only delete files inside uploads/avatars directory
-            const uploadsDir = path.resolve(__dirname, '../uploads/avatars');
-            const avatarPath = path.resolve(__dirname, '..', avatarUrl);
-            if (avatarPath.startsWith(uploadsDir) && fs.existsSync(avatarPath)) {
-                fs.unlinkSync(avatarPath);
-            }
-
-            // Remove from database
-            await db.query(
-                'UPDATE users SET avatar_url = NULL WHERE id = $1',
-                [userId]
-            );
-        }
-
+        await profileService.deleteAvatar(req.user.id);
         res.status(200).json({ message: 'Avatar deleted successfully' });
     } catch (error) {
-        console.error('Delete avatar error:', error);
-        res.status(500).json({ message: 'Failed to delete avatar' });
+        next(error);
     }
 };
 

@@ -1,18 +1,22 @@
 const { Pool } = require('pg');
-require('dotenv').config();
+const config = require('./index');
+const logger = require('../utils/logger');
 
 // Create PostgreSQL connection pool
+// The connection string comes from our centralized config (which validates
+// that DATABASE_URL exists at startup — fail-fast if it's missing).
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: config.databaseUrl,
 });
 
 // Test database connection
 pool.on('connect', () => {
-    console.log('✅ Connected to PostgreSQL database');
+    logger.info('✅ Connected to PostgreSQL database');
 });
 
 pool.on('error', (err) => {
-    console.error('❌ Database connection error:', err);
+    logger.fatal({ err }, '💥 Unexpected error on idle client');
+    process.exit(-1);
 });
 
 module.exports = pool;

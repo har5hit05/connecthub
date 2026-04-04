@@ -1,64 +1,74 @@
-# ConnectHub
+<div align="center">
+  <h1>🌟 ConnectHub</h1>
+  <p><strong>A Full-Stack Real-Time Communication Platform</strong></p>
 
-A full-stack real-time communication platform built with **React**, **Node.js**, **WebRTC**, **Socket.io**, and **PostgreSQL**.
+  [![React](https://img.shields.io/badge/React-19-blue?logo=react)](https://react.dev)
+  [![Node.js](https://img.shields.io/badge/Node.js-18+-green?logo=node.js)](https://nodejs.org)
+  [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-316192?logo=postgresql)](https://postgresql.org)
+  [![WebRTC](https://img.shields.io/badge/WebRTC-P2P%20Calling-FF6F00?logo=webrtc)](https://webrtc.org)
+  [![Socket.io](https://img.shields.io/badge/Socket.io-Real--Time-black?logo=socket.io)](https://socket.io)
+  
+</div>
 
-## Features
+## 📖 Overview
 
-- 🔐 User authentication with JWT
-- 💬 Real-time chat with typing indicators
-- 📹 1-on-1 video calling (WebRTC)
-- 📞 1-on-1 audio calling
-- 🖥️ Screen sharing during video calls
-- 👥 Online/Offline presence system
-- 📋 Call history with duration tracking
-- 📊 Dashboard with stats and quick actions
-- 🧑‍🤝‍🧑 Friend Request System
-- 👤 User Profile Management
-- 🫸 Block user to resrict any kind of communication
+ConnectHub is a comprehensive real-time chat and video calling application mimicking features of popular networking apps like WhatsApp Web. It handles secure user authentication, direct peer-to-peer media communication, and instantaneous message delivery.
 
-## Tech Stack
+## ✨ Features
 
-| Layer | Technology |
+- 🔐 **Secure Authentication**: Robust JWT-based auth with `bcryptjs` password hashing.
+- 💬 **Real-time Chatting**: Instant messaging using Socket.io, complete with *typing indicators* and unread counts.
+- 📹 **P2P Video & Audio Calling**: Leveraging **WebRTC** for direct browser-to-browser media streaming.
+- 🖥️ **Screen Sharing**: Effortlessly share your screen seamlessly during active video calls.
+- 👥 **Presence System**: See who is Online, Offline, or Idle in real-time.
+- 🧑‍🤝‍🧑 **Friend Requests**: Send, accept, or reject peer connections.
+- 🫸 **Privacy Controls**: Block unwanted users easily.
+- 📋 **Call History**: Track call duration, missed calls, and history across users.
+
+---
+
+## 🏗️ Architecture Stack
+
+```mermaid
+graph TD
+    subgraph Frontend [React Application]
+        A[React UI] --> B[Socket.io-client]
+        A --> C[Axios HTTP Client]
+        A --> D[WebRTC PeerConnection]
+    end
+
+    subgraph Backend [Node.js Server]
+        E[Express REST API] <--- C
+        F[Socket.io Server] <--- B
+        E --> G[PostgreSQL Database]
+        F --> G
+    end
+
+    %% WebRTC Connection
+    D <-. "Direct P2P Media Stream" .-> D
+```
+
+| Layer | Technologies Used |
 |---|---|
-| Frontend | React, React Router, Socket.io-client, Axios |
-| Backend | Node.js, Express, Socket.io |
-| Database | PostgreSQL |
-| Real-time | WebRTC, Socket.io (signaling) |
-| Auth | JWT, bcryptjs |
+| **Frontend** | React 19, React Router v7, Axios, Socket.io-client |
+| **Backend** | Node.js, Express.js |
+| **Database** | PostgreSQL |
+| **Real-time & Media** | WebRTC (P2P), Socket.io (Signaling) |
 
-## Project Structure
+---
 
-```
-ConnectHub/
-├── backend/
-│   ├── config/          # Database connection
-│   ├── controllers/     # Request handlers
-│   ├── middleware/      # Auth middleware
-│   ├── routes/          # API routes
-│   ├── socket/          # Socket.io & WebRTC signaling
-│   └── server.js        # Main server entry
-├── frontend/
-│   ├── src/
-│   │   ├── components/  # IncomingCall, VideoCall
-│   │   ├── context/     # AuthContext, SocketContext
-│   │   ├── pages/       # Dashboard, Chat, CallHistory, Login, Register, Friends
-│   │   ├── App.jsx      # Routes
-│   │   └── App.css      # All styles
-│   └── ...
-└── README.md
-```
-
-## Setup & Run
+## 🚀 Getting Started
 
 ### 1. Prerequisites
-- Node.js 18+
-- PostgreSQL 14+
+- **Node.js** v18+
+- **PostgreSQL** v14+
 
-### 2. Database Setup
+### 2. Database Initialization
 ```sql
 CREATE DATABASE connecthub;
 \c connecthub
 
+-- Create tables
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
@@ -92,46 +102,34 @@ CREATE TABLE calls (
 );
 ```
 
-### 3. Backend
+### 3. Backend Setup
 ```bash
 cd backend
-cp .env.example .env   # Edit with your PostgreSQL password & JWT secret
+cp .env.example .env   # Provide DB credentials and JWT secret
 npm install
 npm run dev
 ```
 
-### 4. Frontend
+### 4. Frontend Setup
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-### 5. Open
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:5000
+The app will be running at [http://localhost:5173](http://localhost:5173) and the API on `http://localhost:5000`.
 
-## Environment Variables
+---
 
-Create `backend/.env`:
-```
-PORT=5000
-DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/connecthub
-JWT_SECRET=your_secret_key_here
-NODE_ENV=development
-```
+## 🧠 How WebRTC Works in ConnectHub
 
-## How WebRTC Works in This Project
+1. **Permission**: User A initiates a call; the browser requests camera/microphone permissions.
+2. **Signaling**: A `call_request` socket event notifies User B.
+3. **Acceptance**: User B accepts, dispatching a `call_accepted` event.
+4. **Offer**: User A generates an SDP **Offer** and sends it to User B.
+5. **Answer**: User B accepts the Offer, creates an **Answer**, and replies.
+6. **ICE Candidates**: Both peers exchange ICE candidates to discover optimal network paths.
+7. **Connection Established**: P2P data flow commences without server interference.
 
-1. User A clicks "Call" → browser gets camera/mic permission
-2. A `call_request` event is sent via Socket.io to User B
-3. User B sees "Incoming Call" and clicks Accept
-4. A `call_accepted` event goes back to User A
-5. User A creates an RTCPeerConnection and sends an SDP **Offer**
-6. User B receives the Offer, creates an **Answer**, sends it back
-7. Both sides exchange **ICE candidates** to find the best network path
-8. A direct peer-to-peer connection is established — video/audio flows without the server
-9. Screen sharing works by swapping the video track using `replaceTrack()`
-
-## License
-Built as a personal project (for learning) for portfolio purposes.
+---
+*Built for educational and portfolio purposes.*

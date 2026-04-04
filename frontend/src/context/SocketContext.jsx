@@ -1,19 +1,15 @@
 import { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
+import { SOCKET_URL, API_URL } from '../config';
 
 const SocketContext = createContext();
 
-const SOCKET_URL = 'http://localhost:5000';
-
-// STUN servers help WebRTC find a path between two users
-// even if they are behind firewalls or NAT
-// These are free Google STUN servers
-const ICE_SERVERS = {
+// Fallback ICE config in case the backend API is unreachable
+const FALLBACK_ICE_CONFIG = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' }
     ]
 };
 
@@ -36,20 +32,160 @@ export const SocketProvider = ({ children }) => {
     const [remoteStream, setRemoteStream] = useState(null);   // Other person's stream
     const [callStatus, setCallStatus] = useState(null);       // 'calling', 'connected', null
     const [isSharing, setIsSharing] = useState(false);        // Is screen sharing active?
+    const [callQuality, setCallQuality] = useState(null);     // { packetLoss, jitter, rtt, bitrate }
     const cameraTrackRef = useRef(null);                      // Stores original camera track to swap back
+    const iceConfigRef = useRef(FALLBACK_ICE_CONFIG);         // ICE config from backend (with TURN)
+    const statsIntervalRef = useRef(null);                    // Interval ID for stats polling
+    const callMetricsRef = useRef(null);                      // Aggregated metrics to send on call end
+    const callIdRef = useRef(null);                           // Database call ID for metrics submission
+    const prevStatsRef = useRef(null);                        // Previous stats snapshot for delta calculations
+    const pendingCandidatesRef = useRef([]);                  // Queue for ICE candidates that arrive before remote description
 
     // ── Contacts map (id → username) for looking up names ──
     const contactsRef = useRef({});
-    const setContacts = (contacts) => {
+    const setContacts = useCallback((contacts) => {
         const map = {};
         contacts.forEach((c) => { map[c.id] = c.username; });
         contactsRef.current = map;
+    }, []);
+
+    // ───────────────────────────────────────────
+    // FETCH ICE CONFIG from backend (includes TURN credentials)
+    // ───────────────────────────────────────────
+    const fetchIceConfig = async () => {
+        try {
+            const res = await fetch(`${API_URL}/webrtc/turn`, {
+                credentials: 'include' // Send JWT cookie
+            });
+            if (res.ok) {
+                const config = await res.json();
+                iceConfigRef.current = config;
+                return config;
+            }
+        } catch (err) {
+            console.warn('Failed to fetch ICE config, using fallback STUN-only:', err.message);
+        }
+        return FALLBACK_ICE_CONFIG;
+    };
+
+    // ───────────────────────────────────────────
+    // WEBRTC STATS: Poll connection quality every 3 seconds
+    // ───────────────────────────────────────────
+    const startStatsPolling = (pc) => {
+        // Clear any existing interval
+        if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
+        prevStatsRef.current = null;
+        callMetricsRef.current = { packetLoss: 0, jitter: 0, roundTripTime: 0, bitrate: 0, sampleCount: 0 };
+
+        statsIntervalRef.current = setInterval(async () => {
+            if (!pc || pc.connectionState === 'closed') {
+                clearInterval(statsIntervalRef.current);
+                return;
+            }
+
+            try {
+                const stats = await pc.getStats();
+                let currentPacketLoss = 0;
+                let currentJitter = 0;
+                let currentRtt = 0;
+                let currentBitrate = 0;
+
+                stats.forEach((report) => {
+                    // Inbound RTP — packet loss and jitter from our perspective
+                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                        if (prevStatsRef.current) {
+                            const prev = prevStatsRef.current.get(report.id);
+                            if (prev) {
+                                const packetsLost = report.packetsLost - (prev.packetsLost || 0);
+                                const packetsReceived = report.packetsReceived - (prev.packetsReceived || 0);
+                                const totalPackets = packetsLost + packetsReceived;
+                                currentPacketLoss = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
+
+                                const bytesReceived = report.bytesReceived - (prev.bytesReceived || 0);
+                                const timeDelta = (report.timestamp - prev.timestamp) / 1000; // seconds
+                                currentBitrate = timeDelta > 0 ? (bytesReceived * 8) / timeDelta / 1000 : 0; // kbps
+                            }
+                        }
+                        currentJitter = (report.jitter || 0) * 1000; // convert to ms
+                    }
+
+                    // Candidate pair — round trip time
+                    if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                        currentRtt = (report.currentRoundTripTime || 0) * 1000; // convert to ms
+                    }
+                });
+
+                // Save current stats for next delta calculation
+                prevStatsRef.current = new Map();
+                stats.forEach((report) => {
+                    prevStatsRef.current.set(report.id, report);
+                });
+
+                // Update the live quality indicator
+                const quality = {
+                    packetLoss: Math.round(currentPacketLoss * 100) / 100,
+                    jitter: Math.round(currentJitter * 100) / 100,
+                    rtt: Math.round(currentRtt * 100) / 100,
+                    bitrate: Math.round(currentBitrate * 100) / 100
+                };
+                setCallQuality(quality);
+
+                // Accumulate running averages for final submission
+                if (callMetricsRef.current) {
+                    const m = callMetricsRef.current;
+                    m.sampleCount++;
+                    m.packetLoss += (currentPacketLoss - m.packetLoss) / m.sampleCount;
+                    m.jitter += (currentJitter - m.jitter) / m.sampleCount;
+                    m.roundTripTime += (currentRtt - m.roundTripTime) / m.sampleCount;
+                    m.bitrate += (currentBitrate - m.bitrate) / m.sampleCount;
+                }
+            } catch (err) {
+                // Stats API can throw if connection is closing
+            }
+        }, 3000);
+    };
+
+    const stopStatsPolling = () => {
+        if (statsIntervalRef.current) {
+            clearInterval(statsIntervalRef.current);
+            statsIntervalRef.current = null;
+        }
+    };
+
+    // ───────────────────────────────────────────
+    // SEND METRICS to backend after call ends
+    // ───────────────────────────────────────────
+    const sendCallMetrics = async () => {
+        const callId = callIdRef.current;
+        const metrics = callMetricsRef.current;
+
+        if (!callId || !metrics || metrics.sampleCount === 0) return;
+
+        try {
+            await fetch(`${API_URL}/calls/${callId}/metrics`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    packetLoss: Math.round(metrics.packetLoss * 100) / 100,
+                    jitter: Math.round(metrics.jitter * 100) / 100,
+                    roundTripTime: Math.round(metrics.roundTripTime * 100) / 100,
+                    bitrate: Math.round(metrics.bitrate * 100) / 100
+                })
+            });
+        } catch (err) {
+            console.warn('Failed to submit call metrics:', err.message);
+        }
     };
 
     // ───────────────────────────────────────────
     // CLEANUP: Stop all tracks and close connection
     // ───────────────────────────────────────────
     const cleanupCall = useCallback(() => {
+        // Stop stats polling and send aggregated metrics
+        stopStatsPolling();
+        sendCallMetrics();
+
         // Stop all media tracks (turn off camera and mic)
         if (localStreamRef.current) {
             localStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -68,8 +204,12 @@ export const SocketProvider = ({ children }) => {
         setActiveCall(null);
         setIncomingCall(null);
         setCallStatus(null);
+        setCallQuality(null);
         setIsSharing(false);
         cameraTrackRef.current = null;
+        callMetricsRef.current = null;
+        callIdRef.current = null;
+        prevStatsRef.current = null;
     }, []);
 
     // ───────────────────────────────────────────
@@ -98,13 +238,12 @@ export const SocketProvider = ({ children }) => {
     // Sets up the WebRTC connection and all event handlers
     // ───────────────────────────────────────────
     const createPeerConnection = (otherUserId) => {
-        const pc = new RTCPeerConnection(ICE_SERVERS);
+        const pc = new RTCPeerConnection(iceConfigRef.current);
 
         // When we have an ICE candidate, send it to the other user
         pc.onicecandidate = (event) => {
             if (event.candidate && socketRef.current) {
                 socketRef.current.emit('webrtc_ice_candidate', {
-                    senderId: user.id,
                     receiverId: otherUserId,
                     candidate: event.candidate
                 });
@@ -125,6 +264,10 @@ export const SocketProvider = ({ children }) => {
                 console.log('ICE connection lost');
                 cleanupCall();
             }
+            // Start stats polling once connected
+            if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                startStatsPolling(pc);
+            }
         };
 
         peerConnectionRef.current = pc;
@@ -137,18 +280,20 @@ export const SocketProvider = ({ children }) => {
     const initiateCall = async (otherUser, callType) => {
         if (!socketRef.current) return;
 
-        // Step 1: Get our camera/mic
+        // Step 1: Fetch ICE config with TURN credentials from backend
+        await fetchIceConfig();
+
+        // Step 2: Get our camera/mic
         const stream = await getMediaStream(callType);
         if (!stream) return;
 
-        // Step 2: Tell the other user we want to call them
+        // Step 3: Tell the other user we want to call them
         socketRef.current.emit('call_request', {
-            callerId: user.id,
             receiverId: otherUser.id,
             callType: callType
         });
 
-        // Step 3: Update our state to show "Calling..."
+        // Step 4: Update our state to show "Calling..."
         setActiveCall({ userId: otherUser.id, callType, username: otherUser.username });
         setCallStatus('calling');
     };
@@ -161,23 +306,25 @@ export const SocketProvider = ({ children }) => {
 
         const { callerId, callType } = incomingCall;
 
-        // Step 1: Get our camera/mic
+        // Step 1: Fetch ICE config with TURN credentials from backend
+        await fetchIceConfig();
+
+        // Step 2: Get our camera/mic
         const stream = await getMediaStream(callType);
         if (!stream) return;
 
-        // Step 2: Tell the caller we accepted
+        // Step 3: Tell the caller we accepted
         socketRef.current.emit('call_accepted', {
-            callerId: callerId,
-            receiverId: user.id
+            callerId: callerId
         });
 
-        // Step 3: Create peer connection and add our stream tracks to it
+        // Step 4: Create peer connection and add our stream tracks to it
         const pc = createPeerConnection(callerId);
         stream.getTracks().forEach((track) => {
             pc.addTrack(track, stream);
         });
 
-        // Step 4: Update state
+        // Step 5: Update state
         setActiveCall({
             userId: callerId,
             callType,
@@ -193,8 +340,7 @@ export const SocketProvider = ({ children }) => {
         if (!incomingCall || !socketRef.current) return;
 
         socketRef.current.emit('call_rejected', {
-            callerId: incomingCall.callerId,
-            receiverId: user.id
+            callerId: incomingCall.callerId
         });
 
         setIncomingCall(null);
@@ -206,7 +352,6 @@ export const SocketProvider = ({ children }) => {
     const endCall = () => {
         if (socketRef.current && activeCall) {
             socketRef.current.emit('call_ended', {
-                senderId: user.id,
                 receiverId: activeCall.userId
             });
         }
@@ -313,8 +458,21 @@ export const SocketProvider = ({ children }) => {
     useEffect(() => {
         if (!user) return;
 
-        socketRef.current = io(SOCKET_URL);
-        socketRef.current.emit('authenticate', user.id);
+        // Request Notification permission if possible
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+
+        // The browser sends the httpOnly JWT cookie automatically.
+        // withCredentials: true is required for cross-origin cookie sending.
+        socketRef.current = io(SOCKET_URL, {
+            withCredentials: true
+        });
+
+        // Handle authentication failure on socket connection
+        socketRef.current.on('connect_error', (err) => {
+            console.error('Socket connection failed:', err.message);
+        });
 
         // ── CHAT EVENTS ──
         socketRef.current.on('user_online', (data) => {
@@ -340,6 +498,17 @@ export const SocketProvider = ({ children }) => {
                 fileName: data.fileName,
                 createdAt: data.createdAt
             }]);
+
+            // Native Browser Push Notification
+            if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+                const senderName = contactsRef.current[data.senderId] || 'Someone';
+                const bodyMsg = data.message || (data.fileType ? 'Sent an attachment' : 'New message');
+                new Notification(`New message from ${senderName}`, {
+                    body: bodyMsg,
+                    icon: '/vite.svg',
+                    vibrate: [200, 100, 200]
+                });
+            }
         });
 
         socketRef.current.on('message_sent', (data) => {
@@ -367,6 +536,16 @@ export const SocketProvider = ({ children }) => {
                 callerId: data.callerId,
                 callType: data.callType
             });
+
+            // Native Browser Push Notification
+            if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+                const callerName = contactsRef.current[data.callerId] || 'Someone';
+                new Notification(`Incoming ${data.callType} call from ${callerName}`, {
+                    body: 'Click to open ConnectHub and answer',
+                    icon: '/vite.svg',
+                    vibrate: [500, 200, 500, 200, 500]
+                });
+            }
         });
 
         // The person we called accepted
@@ -388,7 +567,6 @@ export const SocketProvider = ({ children }) => {
                 await pc.setLocalDescription(offer);
 
                 socketRef.current.emit('webrtc_offer', {
-                    senderId: user.id,
                     receiverId: data.receiverId,
                     offer: offer
                 });
@@ -400,14 +578,14 @@ export const SocketProvider = ({ children }) => {
 
         // The person we called rejected
         socketRef.current.on('call_rejected', () => {
-            alert('Call was rejected.');
-            cleanupCall();
+            setCallStatus('rejected');
+            setTimeout(() => cleanupCall(), 3000);
         });
 
         // Call failed (user offline)
         socketRef.current.on('call_failed', (data) => {
-            alert(data.message);
-            cleanupCall();
+            setCallStatus('failed');
+            setTimeout(() => cleanupCall(), 3000);
         });
 
         // We received a WebRTC Offer (we are the receiver / User B)
@@ -419,12 +597,20 @@ export const SocketProvider = ({ children }) => {
                 // Set the remote description (the offer from User A)
                 await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
 
+                // Process any candidates that arrived locally early for User B
+                if (pendingCandidatesRef.current && pendingCandidatesRef.current.length > 0) {
+                    for (const candidate of pendingCandidatesRef.current) {
+                        try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } 
+                        catch (e) { console.warn('Failed to add queued candidate:', e); }
+                    }
+                    pendingCandidatesRef.current = [];
+                }
+
                 // Create and send our Answer
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
 
                 socketRef.current.emit('webrtc_answer', {
-                    senderId: user.id,
                     receiverId: data.senderId,
                     answer: answer
                 });
@@ -441,6 +627,14 @@ export const SocketProvider = ({ children }) => {
                 await peerConnectionRef.current.setRemoteDescription(
                     new RTCSessionDescription(data.answer)
                 );
+                // Process any candidates that arrived early
+                if (pendingCandidatesRef.current) {
+                    for (const candidate of pendingCandidatesRef.current) {
+                        try { await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)); } 
+                        catch (e) { console.warn('Failed to add queued candidate:', e); }
+                    }
+                    pendingCandidatesRef.current = [];
+                }
             } catch (error) {
                 console.error('Error handling webrtc_answer:', error);
                 cleanupCall();
@@ -452,12 +646,23 @@ export const SocketProvider = ({ children }) => {
             if (!peerConnectionRef.current) return;
 
             try {
-                await peerConnectionRef.current.addIceCandidate(
-                    new RTCIceCandidate(data.candidate)
-                );
+                if (!peerConnectionRef.current.remoteDescription) {
+                    // Queue candidate if remote description isn't set yet (race condition fix)
+                    if (!pendingCandidatesRef.current) pendingCandidatesRef.current = [];
+                    pendingCandidatesRef.current.push(data.candidate);
+                } else {
+                    await peerConnectionRef.current.addIceCandidate(
+                        new RTCIceCandidate(data.candidate)
+                    );
+                }
             } catch (error) {
                 console.error('Failed to add ICE candidate:', error);
             }
+        });
+
+        // Backend saved the call to the database — we need the ID to submit metrics
+        socketRef.current.on('call_recorded', (data) => {
+            callIdRef.current = data.callId;
         });
 
         // The other person ended the call
@@ -478,26 +683,25 @@ export const SocketProvider = ({ children }) => {
     const sendMessage = (receiverId, message, fileData) => {
         if (socketRef.current && user) {
             socketRef.current.emit('send_message', {
-                senderId: user.id,
                 receiverId,
                 message: message || null,
                 fileUrl: fileData?.fileUrl || null,
                 fileType: fileData?.fileType || null,
                 fileName: fileData?.fileName || null
             });
-            socketRef.current.emit('typing_stop', { senderId: user.id, receiverId });
+            socketRef.current.emit('typing_stop', { receiverId });
         }
     };
 
     const startTyping = (receiverId) => {
         if (socketRef.current && user) {
-            socketRef.current.emit('typing_start', { senderId: user.id, receiverId });
+            socketRef.current.emit('typing_start', { receiverId });
         }
     };
 
     const stopTyping = (receiverId) => {
         if (socketRef.current && user) {
-            socketRef.current.emit('typing_stop', { senderId: user.id, receiverId });
+            socketRef.current.emit('typing_stop', { receiverId });
         }
     };
 
@@ -526,6 +730,7 @@ export const SocketProvider = ({ children }) => {
             localStream,
             remoteStream,
             callStatus,
+            callQuality,
             initiateCall,
             acceptCall,
             rejectCall,
