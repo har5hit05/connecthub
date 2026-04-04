@@ -49,7 +49,7 @@ const config = {
     cookie: {
         httpOnly: true,                                            // JS can't read (XSS protection)
         secure: process.env.NODE_ENV === 'production',             // HTTPS only in prod
-        sameSite: 'lax',                                           // CSRF protection
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // 'none' required for cross-origin in prod
         maxAge: parseInt(process.env.COOKIE_MAX_AGE, 10) || 7 * 24 * 60 * 60 * 1000  // 7 days
     },
 
